@@ -508,3 +508,22 @@ away (fixed by the power); using the parallel shadow texture as the mask smeared
 straight columns across the fan (fixed by using only ids).
 Known: noon beams are subtle; RAY_STRENGTH / RAY_SHARPNESS / RAY_REACH are the knobs.
 Learner decided: keep subtle midday beams, dramatic mornings/evenings (accepted as is).
+
+## Procedural art pass
+First commit made (c074241) at the learner's request; temp-assets/ and .DS_Store left
+untracked (third-party packs, unknown licences).
+Learner chose the art pass next.
+Learner decided: terrain first; muted and earthy, slightly warm but dangerous; snap
+leaves to the grid; pebbly and chunky first (pivot later if it looks weird).
+Introduced: clusters not specks, hue-shifted shade ramps, every shape lit from above,
+hard jagged edges instead of soft blends; identity comes from palette and shape language.
+Implemented: 5-shade ramps (dirt/stone/grass), pebble generator (jittered grid, lumpy
+stones, lit tops, shaded undersides, dark gaps/cracks, wraps), grass blade texture, 8x8
+material blocks, hard ragged transition masks (BAND 7, FRINGE 2), thin rim (top, warm)
+and lip (sides/bottom, dark) masks for faces to air, 4 leaf clump variants on the pixel
+grid (no rotation, snapped positions and sway).
+Tuning along the way: grass and terrain too dark under the lighting (ramps raised a
+step); small leaf clumps left pinholes that outlined as speckle (clumps kept full).
+Tried and reverted: letting direct light soak into ground (no visible gain).
+Known: bark and branches unchanged (tree pass); grass is a band on the tile, no blades
+overhanging above it; leaf clumps read as solid blobs (no inner shading).

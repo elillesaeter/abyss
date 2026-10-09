@@ -3,6 +3,8 @@
 //! Anything constant for every tile of a kind lives here, indexed by `TileId`,
 //! so the world grid only ever stores the id. Adding kinds costs no per-tile bytes.
 
+use crate::atlas::{MAT_DIRT, MAT_GRASS, MAT_STONE};
+
 pub type TileId = u16;
 
 pub const AIR: TileId = 0;
@@ -37,8 +39,8 @@ pub const TILE_TYPES: &[TileType] = &[
     // Air's own material is the sky; the dark edge it casts on neighbours is a
     // separate material, since one is a surface and the other is a shadow.
     TileType { name: "air",   solid: false, breakable: false, atlas_mat: 5, precedence: 255, color: [0, 0, 0, 0], light: [0.0; 3], drag: 1.0 },
-    TileType { name: "dirt",  solid: true,  breakable: true,  atlas_mat: 1, precedence: 2, color: [134, 96, 67, 255], light: [0.0; 3], drag: 1.0 },
-    TileType { name: "stone", solid: true,  breakable: true,  atlas_mat: 2, precedence: 1, color: [118, 118, 128, 255], light: [0.0; 3], drag: 1.0 },
+    TileType { name: "dirt",  solid: true,  breakable: true,  atlas_mat: MAT_DIRT, precedence: 2, color: [114, 79, 57, 255], light: [0.0; 3], drag: 1.0 },
+    TileType { name: "stone", solid: true,  breakable: true,  atlas_mat: MAT_STONE, precedence: 1, color: [92, 85, 91, 255], light: [0.0; 3], drag: 1.0 },
     TileType { name: "torch", solid: false, breakable: false, atlas_mat: 6, precedence: 254, color: [250, 196, 120, 255], light: [1.0, 0.72, 0.38], drag: 1.0 },
     // No colour: the grid draws a trunk cell as the air behind it (see `drawn_as`).
     TileType { name: "trunk", solid: false, breakable: true,  atlas_mat: 5, precedence: 255, color: [0, 0, 0, 0], light: [0.0; 3], drag: 1.0 },
@@ -60,9 +62,9 @@ pub struct DecorType {
 pub const DECOR_TYPES: &[DecorType] = &[DecorType {
     bit: DECOR_GRASS,
     name: "grass",
-    atlas_mat: 3,
+    atlas_mat: MAT_GRASS,
     precedence: 10,
-    color: [76, 145, 65, 255],
+    color: [96, 122, 54, 255],
 }];
 
 pub fn tile_type(id: TileId) -> &'static TileType {

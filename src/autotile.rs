@@ -11,7 +11,7 @@
 
 use crate::atlas::{self, DIRS, SOLID_MASK};
 use crate::tiles::{AIR, DECOR_TYPES, TileId, atlas_mat, drawn_as, is_solid, precedence};
-use crate::atlas::{MAT_AIR_SHADOW, MAT_SKY};
+use crate::atlas::{MAT_AIR_SHADOW, MAT_RIM, MAT_SKY, THIN_MASKS};
 use crate::world::World;
 
 #[repr(C)]
@@ -78,6 +78,8 @@ pub fn textured(mat: u16, anchor: [i32; 2]) -> u16 {
 const MAX_OVERLAYS: usize = 4;
 /// Bleeding materials plus any decoration the tile carries.
 const MAX_LAYERS: usize = MAX_OVERLAYS + 4;
+/// Neighbour bits that face up: north and its two diagonals.
+const TOP: u8 = 1 | 1 << 4 | 1 << 7;
 
 /// Appends the base instance for a solid tile to `bases`, and its overlays to
 /// `overlays`. Air tiles produce nothing.
@@ -136,7 +138,19 @@ pub fn emit_tile(world: &World, x: i32, y: i32, bases: &mut Vec<Instance>, overl
         }
     };
     for &(neighbour, bits) in &found[..count] {
-        push((precedence(neighbour), bits as u16, overlay_mat(neighbour)));
+        if neighbour == AIR {
+            // A face to air is lit from above: a warm rim where it faces up, a
+            // darker lip on the sides and underneath.
+            let (top, rest) = (bits & TOP, bits & !TOP);
+            if rest != 0 {
+                push((precedence(AIR), THIN_MASKS + rest as u16, MAT_AIR_SHADOW));
+            }
+            if top != 0 {
+                push((precedence(AIR), THIN_MASKS + top as u16, MAT_RIM));
+            }
+        } else {
+            push((precedence(neighbour), bits as u16, atlas_mat(neighbour)));
+        }
     }
     let decor = world.decor(x, y);
     if decor != 0 && air_bits != 0 {
@@ -172,10 +186,6 @@ pub fn build_chunk(
     }
 }
 
-/// Air bleeding onto a neighbour is a shadow cast on it, not the sky's own surface.
-fn overlay_mat(id: TileId) -> u16 {
-    if id == AIR { MAT_AIR_SHADOW } else { atlas_mat(id) }
-}
 
 /// The player and other sprites, until they have atlas cells of their own.
 pub fn tinted_box(pos: [f32; 2], size: [f32; 2], tint: [u8; 4], id: u32) -> Instance {
@@ -235,8 +245,8 @@ mod tests {
         world.set(32, 31, AIR);
         let (_, overlays) = emitted(&world, 32, 32);
         assert_eq!(overlays.len(), 1);
-        assert_eq!(overlays[0].material(), MAT_AIR_SHADOW);
-        assert_eq!(overlays[0].mask, N, "expected only the north bit");
+        assert_eq!(overlays[0].material(), MAT_RIM, "a face to the sky above gets the lit rim");
+        assert_eq!(overlays[0].mask, THIN_MASKS + N, "expected only the north bit");
     }
 
     #[test]
@@ -245,7 +255,7 @@ mod tests {
         world.set(33, 31, AIR); // north-east only; orthogonals stay solid
         let (_, overlays) = emitted(&world, 32, 32);
         assert_eq!(overlays.len(), 1, "a diagonal neighbour must not be dropped");
-        assert_eq!(overlays[0].mask, NE);
+        assert_eq!(overlays[0].mask, THIN_MASKS + NE);
     }
 
     #[test]
@@ -255,8 +265,9 @@ mod tests {
             world.set(x, y, AIR);
         }
         let (_, overlays) = emitted(&world, 32, 32);
-        assert_eq!(overlays.len(), 1, "one material bleeds through one quad");
-        assert_eq!(overlays[0].mask, N | E | S | W | NE);
+        assert_eq!(overlays.len(), 2, "one lip quad and one rim quad, however many sides");
+        assert_eq!((overlays[0].material(), overlays[0].mask), (MAT_AIR_SHADOW, THIN_MASKS + (E | S | W)));
+        assert_eq!((overlays[1].material(), overlays[1].mask), (MAT_RIM, THIN_MASKS + (N | NE)), "the rim paints over the lip");
     }
 
     #[test]
@@ -285,7 +296,7 @@ mod tests {
         assert_eq!(overlays.len(), 2, "grass and the air edge both apply");
         assert_eq!(overlays[0].material(), grass, "grass paints before the air edge");
         assert_eq!(overlays[0].mask, N, "grass follows the air-facing sides");
-        assert_eq!(overlays[1].material(), MAT_AIR_SHADOW, "the air edge paints last");
+        assert_eq!(overlays[1].material(), MAT_RIM, "the lit rim paints last, over the grass");
     }
 
     #[test]
@@ -344,6 +355,7 @@ mod tests {
     fn every_mask_an_overlay_can_reference_exists_in_the_atlas() {
         assert!(u16::from(u8::MAX) < atlas::MASK_COUNT, "8-bit masks must be addressable");
         assert!(SOLID_MASK < atlas::MASK_COUNT);
+        assert!(THIN_MASKS + u16::from(u8::MAX) < atlas::MASK_COUNT, "every thin edge must be addressable");
     }
 
     #[test]

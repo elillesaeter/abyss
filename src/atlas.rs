@@ -1,11 +1,17 @@
 //! The texture atlas: material textures plus the transition mask set.
 //!
 //! Layout:
-//!   top band    — one 4x4-tile material block per material (air shadow, dirt, stone,
-//!                 grass, white), sampled by world position so the pattern repeats
-//!                 every 4 tiles instead of resetting at every tile edge
-//!   below it    — 257 transition masks of one tile each: index 0..=255 keyed by the
-//!                 8-neighbour bitmask of the bleeding material, plus `SOLID_MASK`.
+//!   top band    — one 8x8-tile material block per material, sampled by world
+//!                 position so the pattern repeats every 8 tiles instead of
+//!                 resetting at every tile edge
+//!   below it    — masks of one tile each: 256 transitions keyed by the 8-neighbour
+//!                 bitmask of the bleeding material, `SOLID_MASK`, the leaf clumps,
+//!                 then 256 thin edges for the lit rim and shaded lip facing air.
+//!
+//! The art follows pixel-art rules so procedural output reads as drawn: each
+//! material keeps to a ramp of a few shades (shadows cooler, highlights warmer),
+//! detail comes in shapes rather than per-pixel noise, every shape is lit from
+//! above, and mask edges are hard — jagged fringes instead of soft blends.
 //!
 //! Masks are shapes, not art per material: an overlay samples the *bleeding
 //! material's* texture and multiplies it by the mask's alpha. One overlay quad per
@@ -22,31 +28,39 @@ use crate::tiles::{DECOR_TYPES, TILE_TYPES};
 pub const CELL: u32 = 16;
 /// A material texture spans this many tiles on each axis, which is what stops the
 /// eye finding a per-tile repeat. Larger breaks it up further at linear atlas cost.
-pub const BLOCK_TILES: u32 = 4;
+pub const BLOCK_TILES: u32 = 8;
 pub const BLOCK: u32 = CELL * BLOCK_TILES;
 
 pub const MASK_COLS: u32 = 16;
-pub const MASK_ROWS: u32 = 17;
+pub const MASK_ROWS: u32 = (MASK_COUNT as u32).div_ceil(MASK_COLS);
 /// Masks start below the material band.
 pub const MASK_BAND_Y: u32 = BLOCK;
 
-pub const MATERIALS: u32 = 9;
+pub const MATERIALS: u32 = 10;
 pub const WIDTH: u32 = MATERIALS * BLOCK;
 pub const HEIGHT: u32 = MASK_BAND_Y + MASK_ROWS * CELL;
 
 /// Material blocks, in order.
 /// The darkening an exposed edge casts on its neighbour, not a surface itself.
 pub const MAT_AIR_SHADOW: u16 = 0;
+pub const MAT_DIRT: u16 = 1;
+pub const MAT_STONE: u16 = 2;
+pub const MAT_GRASS: u16 = 3;
 pub const MAT_WHITE: u16 = 4;
 pub const MAT_SKY: u16 = 5;
 pub const MAT_BARK: u16 = 7;
 pub const MAT_LEAVES: u16 = 8;
+/// The warm highlight along a face lit from above.
+pub const MAT_RIM: u16 = 9;
 
 /// Fully opaque mask, used by base tiles and by untextured quads.
 pub const SOLID_MASK: u16 = 256;
-/// An irregular clump of leaves, for foliage clusters.
+/// Irregular clumps of leaves, smallest first, for sparser and denser foliage.
 pub const LEAF_MASK: u16 = 257;
-pub const MASK_COUNT: u16 = 258;
+pub const LEAF_VARIANTS: u16 = 4;
+/// Thin edges, plus the 8-neighbour bitmask: the rim and lip a face to air gets.
+pub const THIN_MASKS: u16 = LEAF_MASK + LEAF_VARIANTS;
+pub const MASK_COUNT: u16 = THIN_MASKS + 256;
 
 /// Open air. Drawn like any other tile so that unlit air reads as black rather
 /// than as whatever the frame was cleared to.
@@ -54,12 +68,57 @@ pub const SKY_COLOR: [u8; 4] = [107, 153, 219, 255];
 pub const BARK_COLOR: [u8; 4] = [102, 74, 52, 255];
 pub const LEAVES_COLOR: [u8; 4] = [74, 128, 58, 255];
 
-/// How far a transition reaches into the tile, in pixels.
-const BAND: f32 = 8.0;
-/// Width of the fade at the inner edge. The band is fully opaque until the last
-/// `FALLOFF` pixels: a pure linear ramp spends its whole width half-blended, which
-/// reads as a muddy line rather than a layer of grass.
-const FALLOFF: f32 = 4.5;
+/// How far a transition reaches into the tile, in pixels, before its fringe.
+const BAND: f32 = 7.0;
+/// How far a fringe's strands vary either side of `BAND`, in whole pixels: grass
+/// hanging as blades, stone biting into dirt in ragged steps.
+const FRINGE: i32 = 2;
+/// Width of the lit rim and the shaded lip along faces to air.
+const THIN: f32 = 2.0;
+
+/// Shades darkest to lightest. Dark ends lean cool and violet, light ends warm:
+/// muted and earthy, a little warm, a little threatening.
+pub const DIRT_RAMP: [[u8; 3]; 5] = [[52, 34, 36], [84, 55, 45], [114, 79, 57], [143, 105, 73], [174, 136, 95]];
+pub const STONE_RAMP: [[u8; 3]; 5] = [[40, 37, 49], [64, 59, 71], [92, 85, 91], [121, 112, 109], [152, 141, 127]];
+pub const GRASS_RAMP: [[u8; 3]; 5] = [[48, 64, 40], [70, 94, 46], [96, 122, 54], [126, 148, 64], [160, 172, 84]];
+
+/// A pebbly material: stones of a ramp's lighter shades set in a matrix of its
+/// darker ones.
+struct Rocks {
+    ramp: [[u8; 3]; 5],
+    /// Pebbles sit on a jittered grid of this many pixels; it divides `BLOCK` so
+    /// the grid wraps evenly.
+    spacing: u32,
+    /// Chance a grid cell holds a pebble.
+    chance: f32,
+    radius: (f32, f32),
+    /// Shades a pebble's body can take.
+    bodies: &'static [u8],
+    /// Matrix shades for low, middle and high clustered noise.
+    matrix: [u8; 3],
+    seed: u32,
+}
+
+/// Soil with small clods and stones scattered through it.
+const DIRT_ROCKS: Rocks = Rocks {
+    ramp: DIRT_RAMP,
+    spacing: 8,
+    chance: 0.45,
+    radius: (1.4, 2.8),
+    bodies: &[3],
+    matrix: [1, 2, 2],
+    seed: 0xD127,
+};
+/// Big chunks packed tight, dark cracks between.
+const STONE_ROCKS: Rocks = Rocks {
+    ramp: STONE_RAMP,
+    spacing: 8,
+    chance: 0.95,
+    radius: (3.2, 5.4),
+    bodies: &[2, 2, 3],
+    matrix: [0, 1, 1],
+    seed: 0x5701,
+};
 
 pub const PATH: &str = "assets/tiles.png";
 
@@ -133,15 +192,22 @@ pub fn generate() -> Vec<u8> {
     let mut px = vec![0u8; (WIDTH * HEIGHT * 4) as usize];
 
     for tile in TILE_TYPES {
-        material_texture(&mut px, tile.atlas_mat, tile.color);
+        match tile.atlas_mat {
+            MAT_DIRT => rock_texture(&mut px, MAT_DIRT, &DIRT_ROCKS),
+            MAT_STONE => rock_texture(&mut px, MAT_STONE, &STONE_ROCKS),
+            mat => material_texture(&mut px, mat, tile.color),
+        }
     }
     for decor in DECOR_TYPES {
-        material_texture(&mut px, decor.atlas_mat, decor.color);
+        match decor.atlas_mat {
+            MAT_GRASS => grass_texture(&mut px, MAT_GRASS),
+            mat => material_texture(&mut px, mat, decor.color),
+        }
     }
-    // Air bleeding onto a tile reads as a dark inner edge rather than a texture.
-    // Kept weak: this is an ambient darkening at exposed edges, and it paints over
-    // decoration, so a strong value turns grass into a dark outline.
-    material_texture(&mut px, MAT_AIR_SHADOW, [26, 24, 34, 70]);
+    // Faces to air: a darker lip on the sides and underside, a warm rim on top.
+    // Both translucent, so they shade whatever material they land on.
+    flat_material(&mut px, MAT_AIR_SHADOW, [26, 22, 34, 90]);
+    flat_material(&mut px, MAT_RIM, [255, 236, 196, 64]);
     material_texture(&mut px, MAT_WHITE, [255, 255, 255, 255]);
     // Flat: speckle reads as a surface, and sky is not one.
     flat_material(&mut px, MAT_SKY, SKY_COLOR);
@@ -166,6 +232,109 @@ fn flat_material(px: &mut [u8], mat: u16, color: [u8; 4]) {
             put(px, ox + x, oy + y, color);
         }
     }
+}
+
+fn shade(px: &mut [u8], mat: u16, ramp: &[[u8; 3]; 5], shades: &[u8]) {
+    let (ox, oy) = material_block(mat);
+    for y in 0..BLOCK {
+        for x in 0..BLOCK {
+            let [r, g, b] = ramp[shades[(y * BLOCK + x) as usize] as usize];
+            put(px, ox + x, oy + y, [r, g, b, 255]);
+        }
+    }
+}
+
+fn rock_texture(px: &mut [u8], mat: u16, rocks: &Rocks) {
+    shade(px, mat, &rocks.ramp, &rock_shades(rocks).0);
+}
+
+/// Ramp index per pixel of a rock block, and which pebble each pixel belongs to
+/// (-1 for the matrix between them). Everything wraps at the block edge.
+fn rock_shades(rocks: &Rocks) -> (Vec<u8>, Vec<i32>) {
+    let size = BLOCK as i32;
+    let at = |x: i32, y: i32| (y.rem_euclid(size) * size + x.rem_euclid(size)) as usize;
+    let mut ids = vec![-1; (BLOCK * BLOCK) as usize];
+    let mut bodies = Vec::new();
+    let cells = (BLOCK / rocks.spacing) as i32;
+    let spacing = rocks.spacing as f32;
+    for cy in 0..cells {
+        for cx in 0..cells {
+            let r = |k: u32| noise(rocks.seed ^ k, cx as u32, cy as u32);
+            if r(1) > rocks.chance {
+                continue;
+            }
+            let centre = [(cx as f32 + r(2)) * spacing, (cy as f32 + r(3)) * spacing];
+            let (lo, hi) = rocks.radius;
+            // Wider than tall, mostly: stones settle flat.
+            let rx = lo + (hi - lo) * r(4);
+            let ry = rx * (0.65 + 0.35 * r(5));
+            let (lumps, phase) = (2.0 + (r(6) * 3.0).floor(), r(7) * 6.283);
+            let id = bodies.len() as i32;
+            bodies.push(rocks.bodies[(r(8) * rocks.bodies.len() as f32) as usize % rocks.bodies.len()]);
+            let reach = (rx * 1.3).ceil() as i32 + 1;
+            for dy in -reach..=reach {
+                for dx in -reach..=reach {
+                    let (px, py) = (centre[0].floor() as i32 + dx, centre[1].floor() as i32 + dy);
+                    let (ex, ey) = ((px as f32 + 0.5 - centre[0]) / rx, (py as f32 + 0.5 - centre[1]) / ry);
+                    // Lumpy rather than elliptical, so pebbles read as chunks.
+                    let edge = 1.0 + 0.18 * (ey.atan2(ex) * lumps + phase).sin();
+                    if ex * ex + ey * ey < edge * edge {
+                        ids[at(px, py)] = id;
+                    }
+                }
+            }
+        }
+    }
+    let mut shades = vec![0u8; ids.len()];
+    for y in 0..size {
+        for x in 0..size {
+            let me = ids[at(x, y)];
+            let (up, down, left, right) = (ids[at(x, y - 1)], ids[at(x, y + 1)], ids[at(x - 1, y)], ids[at(x + 1, y)]);
+            shades[at(x, y)] = if me < 0 {
+                if [up, down, left, right].iter().any(|&n| n >= 0) {
+                    0 // the dark gap that sets each pebble off
+                } else {
+                    let v = noise(rocks.seed ^ 0xC1, (x / 3) as u32, (y / 3) as u32);
+                    rocks.matrix[if v < 0.3 { 0 } else if v < 0.88 { 1 } else { 2 }]
+                }
+            } else {
+                let body = bodies[me as usize];
+                if (up >= 0 && up != me) || (left >= 0 && left != me) {
+                    0 // a crack where two pebbles meet
+                } else if up != me {
+                    (body + 1).min(4) // lit from above
+                } else if down != me {
+                    body - 1 // shaded underneath
+                } else if left != me {
+                    (body + 1).min(4)
+                } else {
+                    body
+                }
+            };
+        }
+    }
+    (shades, ids)
+}
+
+/// Blades: vertical streaks of the ramp's middle shades, a few bright tips.
+fn grass_texture(px: &mut [u8], mat: u16) {
+    let mut shades = vec![0u8; (BLOCK * BLOCK) as usize];
+    for y in 0..BLOCK {
+        for x in 0..BLOCK {
+            let streak = noise(0x6A55, x, y / 5 + x * 7);
+            let tip = noise(0x6A56, x / 2, y / 2);
+            shades[(y * BLOCK + x) as usize] = if tip > 0.93 {
+                4
+            } else if streak < 0.3 {
+                1
+            } else if streak < 0.8 {
+                2
+            } else {
+                3
+            };
+        }
+    }
+    shade(px, mat, &GRASS_RAMP, &shades);
 }
 
 fn material_texture(px: &mut [u8], mat: u16, color: [u8; 4]) {
@@ -207,56 +376,63 @@ fn mask_texture(px: &mut [u8], mask: u16) {
         for x in 0..CELL {
             let alpha = if mask == SOLID_MASK {
                 255
-            } else if mask == LEAF_MASK {
-                leaf_alpha(x, y)
+            } else if mask >= THIN_MASKS {
+                edge_alpha(x, y, (mask - THIN_MASKS) as u8, THIN, 0)
+            } else if mask >= LEAF_MASK {
+                leaf_alpha(x, y, mask - LEAF_MASK)
             } else {
-                band_alpha(x, y, mask as u8)
+                edge_alpha(x, y, mask as u8, BAND, FRINGE)
             };
             put(px, ox + x, oy + y, [255, 255, 255, alpha]);
         }
     }
 }
 
-/// A clump of a few overlapping round leaves with eroded edges, clear at the cell
-/// border so rotated clusters never show a square outline.
-fn leaf_alpha(x: u32, y: u32) -> u8 {
-    let p = [x as f32 + 0.5, y as f32 + 0.5];
-    let lobes = [([8.0, 8.5], 5.2), ([5.0, 6.0], 3.4), ([11.2, 6.2], 3.2), ([6.2, 11.6], 3.0), ([11.0, 11.0], 3.3)];
+/// A clump of a few overlapping round leaves, `variant` 0 smallest. Its edge is
+/// roughened in 2-pixel steps so it reads as chunky pixel foliage, not a circle.
+/// Even the smallest overlaps its neighbours: a gap inside a canopy picks up an
+/// outline and reads as dark speckle.
+fn leaf_alpha(x: u32, y: u32, variant: u16) -> u8 {
+    let scale = 0.85 + 0.1 * variant as f32;
+    let p = [x as f32 + 0.5 - 8.0, y as f32 + 0.5 - 8.0];
+    let lobes = [([0.0, 0.5], 5.2), ([-3.0, -2.0], 3.4), ([3.2, -1.8], 3.2), ([-1.8, 3.6], 3.0), ([3.0, 3.0], 3.3)];
+    let rough = (noise(0x1EAF ^ variant as u32, x / 2, y / 2) - 0.5) * 1.6;
     let inside = lobes.iter().any(|&(c, r): &([f32; 2], f32)| {
-        let jitter = (noise(0x1EAF, x, y) - 0.5) * 1.6;
-        (p[0] - c[0]).hypot(p[1] - c[1]) < r + jitter
+        (p[0] - c[0] * scale).hypot(p[1] - c[1] * scale) < r * scale + rough
     });
     if inside { 255 } else { 0 }
 }
 
-/// Coverage of a pixel by a material occupying the neighbours in `bits`: the
-/// strongest contribution of any filled direction, so overlapping directions
-/// never compound into a dark seam the way separate additive quads would.
-fn band_alpha(x: u32, y: u32, bits: u8) -> u8 {
+/// Coverage of a pixel by a material occupying the neighbours in `bits`, reaching
+/// `width` pixels in. Hard: a pixel is covered or it is not. Each strand of the
+/// edge — a column for top and bottom, a row for the sides — reaches up to
+/// `fringe` pixels further or shorter, so edges are ragged rather than ruled.
+fn edge_alpha(x: u32, y: u32, bits: u8, width: f32, fringe: i32) -> u8 {
     let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
     let cell = CELL as f32;
-    // Jitter the band edge per pixel so transitions look eroded rather than ruled.
-    let band = BAND + (noise(0x51DE, x, y) - 0.5) * 3.0;
-    let mut best: f32 = 0.0;
     for (bit, (dx, dy)) in DIRS.iter().enumerate() {
         if bits & (1 << bit) == 0 {
             continue;
         }
-        let dist = match (dx, dy) {
-            (0, -1) => py,
-            (0, 1) => cell - py,
-            (-1, 0) => px,
-            (1, 0) => cell - px,
+        let (dist, strand) = match (dx, dy) {
+            (0, -1) => (py, x),
+            (0, 1) => (cell - py, x),
+            (-1, 0) => (px, y),
+            (1, 0) => (cell - px, y),
             // Diagonals measure from the corner itself, giving a quarter-round nub.
             (cx, cy) => {
                 let corner_x = if *cx > 0 { cell } else { 0.0 };
                 let corner_y = if *cy > 0 { cell } else { 0.0 };
-                ((px - corner_x).powi(2) + (py - corner_y).powi(2)).sqrt()
+                (((px - corner_x).powi(2) + (py - corner_y).powi(2)).sqrt(), x + y)
             }
         };
-        best = best.max((band - dist) / FALLOFF);
+        let span = (2 * fringe + 1) as f32;
+        let reach = (noise(0x51DE ^ bit as u32, strand, 0) * span).floor() as i32 - fringe;
+        if dist < width + reach as f32 {
+            return 255;
+        }
     }
-    (best.clamp(0.0, 1.0) * 255.0) as u8
+    0
 }
 
 /// Deterministic value noise in 0..1 for a pixel.
@@ -324,21 +500,83 @@ mod tests {
     }
 
     #[test]
-    fn material_textures_vary_but_stay_near_their_colour() {
+    fn rock_materials_keep_to_their_ramp() {
         let px = generate();
-        for tile in TILE_TYPES.iter().filter(|t| t.color[3] > 0) {
-            let (ox, oy) = material_block(tile.atlas_mat);
-            let mut seen = std::collections::HashSet::new();
+        for (mat, ramp) in [(MAT_DIRT, DIRT_RAMP), (MAT_STONE, STONE_RAMP), (MAT_GRASS, GRASS_RAMP)] {
+            let (ox, oy) = material_block(mat);
+            let mut used = std::collections::HashSet::new();
             for y in 0..BLOCK {
                 for x in 0..BLOCK {
                     let i = (((oy + y) * WIDTH + ox + x) * 4) as usize;
-                    seen.insert(px[i]);
-                    let drift = px[i] as i32 - tile.color[0] as i32;
-                    assert!(drift.abs() <= 32, "{} drifted {drift} from its colour", tile.name);
+                    let rgb = [px[i], px[i + 1], px[i + 2]];
+                    let shade = ramp.iter().position(|&c| c == rgb);
+                    assert!(shade.is_some(), "material {mat} has {rgb:?}, which is off its ramp");
+                    used.insert(shade);
                 }
             }
-            assert!(seen.len() > 4, "{} is a flat colour, not a texture", tile.name);
+            assert!(used.len() >= 4, "material {mat} uses only {} shades", used.len());
         }
+    }
+
+    #[test]
+    fn pebbles_are_lit_from_above() {
+        for rocks in [&DIRT_ROCKS, &STONE_ROCKS] {
+            let (shades, ids) = rock_shades(rocks);
+            let size = BLOCK as usize;
+            let (mut top, mut bottom) = ((0.0, 0), (0.0, 0));
+            for y in 1..size - 1 {
+                for x in 0..size {
+                    let me = ids[y * size + x];
+                    if me < 0 {
+                        continue;
+                    }
+                    let shade = shades[y * size + x] as f32;
+                    if ids[(y - 1) * size + x] < 0 {
+                        top = (top.0 + shade, top.1 + 1);
+                    }
+                    if ids[(y + 1) * size + x] < 0 {
+                        bottom = (bottom.0 + shade, bottom.1 + 1);
+                    }
+                }
+            }
+            let (top, bottom) = (top.0 / top.1 as f32, bottom.0 / bottom.1 as f32);
+            assert!(top > bottom + 1.5, "pebble tops ({top:.2}) should be lighter than undersides ({bottom:.2})");
+        }
+    }
+
+    #[test]
+    fn pebbles_wrap_across_the_block_edge() {
+        let (_, ids) = rock_shades(&STONE_ROCKS);
+        let size = BLOCK as usize;
+        let shared = (0..size).filter(|&y| ids[y * size] >= 0 && ids[y * size] == ids[y * size + size - 1]).count();
+        assert!(shared > 0, "no pebble continues across the seam, so the block edge shows");
+    }
+
+    #[test]
+    fn masks_are_hard_edged() {
+        let px = generate();
+        for mask in (0..SOLID_MASK).chain(LEAF_MASK..MASK_COUNT) {
+            let (ox, oy) = mask_cell(mask);
+            for y in 0..CELL {
+                for x in 0..CELL {
+                    let a = alpha_at(&px, ox + x, oy + y);
+                    assert!(a == 0 || a == 255, "mask {mask} has a half-covered pixel ({a})");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn transition_edges_are_ragged_and_thin_edges_are_not() {
+        let px = generate();
+        let depth = |mask: u16, x: u32| {
+            let (ox, oy) = mask_cell(mask);
+            (0..CELL).take_while(|&y| alpha_at(&px, ox + x, oy + y) == 255).count()
+        };
+        let band: std::collections::HashSet<_> = (0..CELL).map(|x| depth(1, x)).collect();
+        assert!(band.len() > 1, "a transition fringe should vary column to column");
+        let thin: std::collections::HashSet<_> = (0..CELL).map(|x| depth(THIN_MASKS + 1, x)).collect();
+        assert_eq!(thin, [THIN as usize].into(), "the rim is a clean two-pixel line");
     }
 
     #[test]

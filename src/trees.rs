@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::f32::consts::{FRAC_PI_2, TAU};
 use std::ops::Range;
 
-use crate::atlas::{LEAF_MASK, MAT_BARK, MAT_LEAVES, SOLID_MASK};
+use crate::atlas::{self, LEAF_MASK, LEAF_VARIANTS, MAT_BARK, MAT_LEAVES, SOLID_MASK};
 use crate::autotile::{Instance, textured};
 use crate::camera::TileRect;
 use crate::physics::{self, GRAVITY, MAX_FALL};
@@ -235,8 +235,11 @@ impl Tree {
         }
     }
 
-    /// One leaf cluster per foliage cell of `blob`. Drawn about a tile across, wider
-    /// than the half-tile cell, so neighbours overlap into a mass rather than a grid.
+    /// One leaf cluster per foliage cell of `blob`. Drawn a tile across, wider than
+    /// the half-tile cell, so neighbours overlap into a mass rather than a grid.
+    /// Never rotated or scaled, and placed on whole art pixels, sway included, so
+    /// every leaf pixel sits on the same pixel grid as the terrain; how dense the
+    /// cell is picks how full a clump to draw instead.
     fn leaves(
         &self,
         blob: &Blob,
@@ -258,18 +261,15 @@ impl Tree {
                 (sx as f32 + 0.5) / sub + (r(0) - 0.5) * 0.3 + offset,
                 (sy as f32 + 0.5) / sub + (r(1) - 0.5) * 0.3,
             ];
-            // Large enough that neighbours close over each other: pinholes inside a
-            // lobe would each pick up an outline and read as dark speckle.
-            let size = 0.75 + 0.5 * density;
-            let a = r(2) * TAU;
-            let (ax, ay) = (rotate([size, 0.0], a), rotate([0.0, size], a));
+            let variant = ((density * 3.0 + r(2)).floor() as u16).min(LEAF_VARIANTS - 1);
+            let snap = |v: f32| (v * atlas::CELL as f32).round() / atlas::CELL as f32;
             let shade = 0.78 + 0.22 * r(3);
             let warm = 0.92 + 0.16 * r(4);
             out.push(Instance {
-                pos: [centre[0] - (ax[0] + ay[0]) * 0.5, centre[1] - (ax[1] + ay[1]) * 0.5],
-                axis_x: ax,
-                axis_y: ay,
-                mask: LEAF_MASK,
+                pos: [snap(centre[0] - 0.5), snap(centre[1] - 0.5)],
+                axis_x: [1.0, 0.0],
+                axis_y: [0.0, 1.0],
+                mask: LEAF_MASK + variant,
                 mat: textured(MAT_LEAVES, [sx.div_euclid(SUB), sy.div_euclid(SUB)]),
                 tint: [
                     (shade * warm * 255.0).min(255.0) as u8,
@@ -656,6 +656,31 @@ pub fn emit(world: &World, view: TileRect, next_id: &mut u32, out: &mut Vec<Inst
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn is_leaf(mask: u16) -> bool {
+        (LEAF_MASK..LEAF_MASK + LEAF_VARIANTS).contains(&mask)
+    }
+
+    #[test]
+    fn standing_leaves_sit_on_the_pixel_grid() {
+        let mut world = world_with_tree(1, 14);
+        let mut out = Vec::new();
+        let mut id = FIRST_OBJECT_ID;
+        // Swaying moves leaves, in whole pixels only.
+        for clock in [0.0, 1.3, 2.9] {
+            out.clear();
+            world.forest.clock = clock;
+            emit(&world, TileRect { x0: 0, y0: 0, x1: 64, y1: 64 }, &mut id, &mut out);
+            assert!(out.iter().any(|q| is_leaf(q.mask)), "the tree has a crown");
+            for q in out.iter().filter(|q| is_leaf(q.mask)) {
+                assert_eq!((q.axis_x, q.axis_y), ([1.0, 0.0], [0.0, 1.0]), "leaves are never rotated or scaled");
+                for v in q.pos {
+                    let px = v * atlas::CELL as f32;
+                    assert!((px - px.round()).abs() < 1e-3, "a leaf is off the pixel grid at {v}");
+                }
+            }
+        }
+    }
     use crate::autotile::FIRST_OBJECT_ID;
     use crate::tiles::DIRT;
 
@@ -904,7 +929,7 @@ mod tests {
         let leaves = |world: &World| {
             let mut out = Vec::new();
             emit(world, view, &mut FIRST_OBJECT_ID.clone(), &mut out);
-            out.iter().filter(|q| q.mask == LEAF_MASK).count()
+            out.iter().filter(|q| is_leaf(q.mask)).count()
         };
         let before = leaves(&world);
         let cells: Vec<_> = world.forest.trees[0].foliage(0..14).into_keys().take(10).collect();
@@ -941,7 +966,7 @@ mod tests {
         assert!(out.iter().filter(|q| q.mask == SOLID_MASK).all(|q| q.id == wood), "trunk and branches are one object");
         let backs = blobs.iter().filter(|b| !b.front).count() as u32;
         assert!(backs >= 1 && wood == FIRST_OBJECT_ID + backs, "back lobes come before the trunk");
-        let leaf_ids: Vec<u32> = out.iter().filter(|q| q.mask == LEAF_MASK).map(|q| q.id).collect();
+        let leaf_ids: Vec<u32> = out.iter().filter(|q| is_leaf(q.mask)).map(|q| q.id).collect();
         assert!(leaf_ids.iter().any(|&id| id < wood) && leaf_ids.iter().any(|&id| id > wood));
         assert!(out.windows(2).all(|w| w[0].id <= w[1].id), "ids grow with draw order");
     }
