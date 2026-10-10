@@ -161,7 +161,7 @@ renderer rebuilds any visible chunk whose revision no longer matches its cache.
 Single-player assumed so far; not confirmed. Save/world storage undecided.
 
 ## Build and Deployment
-- `cargo test` — 138 unit tests across world, worldgen, camera, physics, player,
+- `cargo test` — 140 unit tests across world, worldgen, camera, physics, player,
   atlas, autotile and the shader guard
 - `cargo run --release` — opens the window; WASD pans, `-`/`=` zooms, Esc quits
 - `cargo run --release -- --dump --x 400 --w 150 --h 28` — ASCII view, no window

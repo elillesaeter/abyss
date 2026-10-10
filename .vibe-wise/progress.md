@@ -527,3 +527,34 @@ step); small leaf clumps left pinholes that outlined as speckle (clumps kept ful
 Tried and reverted: letting direct light soak into ground (no visible gain).
 Known: bark and branches unchanged (tree pass); grass is a band on the tile, no blades
 overhanging above it; leaf clumps read as solid blobs (no inner shading).
+
+## Ragged silhouettes
+Learner approved the pebbly/chunky look. Raised: tile edges against air are straight
+and sterile; Terraria's are slightly jagged. Asked whether to make them jagged.
+Introduced: silhouette vs interior (outline traces the silhouette, so straight tile
+edges get drawn as ruled lines); repetition risk of per-bitmask masks; option of a
+world-keyed edge in the shader.
+Decided (learner): B (world-keyed in shader), subtle 1-2px bites, nicked outer
+corners, stone blockier than dirt.
+Introduced: bitten pixels underground would expose the bright backdrop, so edge
+tiles need their own veil drawn under them (veils move before bases).
+Implemented (learner said "go ahead"): Instance.edges (N/E/S/W air bits +
+EDGE_BLOCKY for stone) on base and all overlays; shader bites 0-2 px keyed by world
+art column/row (dirt per pixel, stone in 3-px runs), nicks outer corners (dirt
+diagonal 1-2 px, stone 2x2 notch), shifts mask lookup so rim/lip/grass follow.
+Exposed solid tiles emit their own veil; veils now drawn before bases.
+Bug hit: new field placed before `id` broke attribute order (ids read edges ->
+terrain counted as background, god rays over ground). Learning point: vertex
+attribute order must match struct layout.
+Verified: 139 tests, noon close-up, carved underground pocket (bites veiled).
+Stage: implemented; awaiting learner review
+
+### Ragged silhouettes, round 2
+Learner review: stone spot on; dirt/grass too busy; trees hover over bites.
+Decided: dirt in 1-2 px lumps (pair split/merge by hash, ~62% flat); trunks sink
+ROOT_SINK 2/16 tile; outline skips terrain directly below an object (roots and
+feet blend into ground), learner chose this over a trees-only rule.
+Introduced: the outline as a depth rule ("edge where something meets what is
+behind it") and when that rule gives the wrong visual answer.
+Verified: 140 tests; close-ups of trunk base and player feet show no sole.
+Stage: implemented; awaiting learner review

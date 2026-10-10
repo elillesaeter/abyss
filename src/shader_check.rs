@@ -28,6 +28,8 @@ mod tests {
             "@location(3) instance_cells: vec2<u32>",
             "@location(4) instance_tint: vec4<f32>",
             "@location(5) instance_id: u32",
+            "@location(6) instance_edges: u32",
+            &format!("const EDGE_BLOCKY: u32 = {}u", crate::autotile::EDGE_BLOCKY),
             "fn fs_soft",
             "@location(1) id: u32",
         ] {
@@ -44,6 +46,7 @@ mod tests {
             "@group(0) @binding(0) var scene: texture_2d<f32>",
             "@group(0) @binding(1) var ids: texture_2d<u32>",
             "@group(0) @binding(2) var<uniform> outline: Outline",
+            &format!("const ID_TERRAIN: u32 = {}u", crate::autotile::ID_TERRAIN),
         ] {
             assert!(OUTLINE.contains(needle), "outline.wgsl is missing `{needle}`");
         }

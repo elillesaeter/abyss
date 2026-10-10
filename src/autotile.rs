@@ -10,7 +10,7 @@
 //! sides, so grass is a skin on dirt rather than a block of its own.
 
 use crate::atlas::{self, DIRS, SOLID_MASK};
-use crate::tiles::{AIR, DECOR_TYPES, TileId, atlas_mat, drawn_as, is_solid, precedence};
+use crate::tiles::{AIR, DECOR_TYPES, STONE, TileId, atlas_mat, drawn_as, is_solid, precedence};
 use crate::atlas::{MAT_AIR_SHADOW, MAT_RIM, MAT_SKY, THIN_MASKS};
 use crate::world::World;
 
@@ -33,6 +33,10 @@ pub struct Instance {
     /// a smaller id is behind: an outline is drawn where something meets what is
     /// behind it, and never inside one object.
     pub id: u32,
+    /// Which sides of the tile face air (N, E, S, W in the low bits) plus
+    /// `EDGE_BLOCKY`: the shader bites a ragged line into those sides. Zero for
+    /// anything that keeps its quad's straight edges.
+    pub edges: u32,
 }
 
 /// Sky, and anything else the world shows through; never outlined itself.
@@ -41,6 +45,34 @@ pub const ID_BACKGROUND: u32 = 0;
 pub const ID_TERRAIN: u32 = 1;
 /// Trees, mobs and the player take ids from here up, in the order they are drawn.
 pub const FIRST_OBJECT_ID: u32 = 2;
+/// The edge breaks in short blocky runs, as stone does, rather than crumbling.
+pub const EDGE_BLOCKY: u32 = 1 << 4;
+/// The four orthogonal neighbour bits: only those sides get bitten.
+const SIDES: u8 = 0b1111;
+
+/// One chunk's instances, in the order they are drawn.
+#[derive(Default)]
+pub struct Layers {
+    /// The underground darkness behind holes. Drawn under the terrain, so it shows
+    /// where a ragged edge bites into a tile as well as through open air.
+    pub veils: Vec<Instance>,
+    pub bases: Vec<Instance>,
+    pub overlays: Vec<Instance>,
+}
+
+impl Layers {
+    fn clear(&mut self) {
+        self.veils.clear();
+        self.bases.clear();
+        self.overlays.clear();
+    }
+}
+
+/// A black quad over one tile, as opaque as the tile is far from the sky.
+fn veil(world: &World, x: i32, y: i32) -> Option<Instance> {
+    let alpha = 255 - (world.skyness(x, y) * 255.0) as u8;
+    (alpha > 0).then(|| Instance { tint: [0, 0, 0, alpha], id: ID_BACKGROUND, ..Instance::tile(x, y, SOLID_MASK, MAT_SKY) })
+}
 
 impl Instance {
     pub fn tile(x: i32, y: i32, mask: u16, mat: u16) -> Instance {
@@ -51,6 +83,7 @@ impl Instance {
             mask,
             mat: textured(mat, [x, y]),
             tint: [255, 255, 255, 255],
+            edges: 0,
             id: ID_TERRAIN,
         }
     }
@@ -81,9 +114,9 @@ const MAX_LAYERS: usize = MAX_OVERLAYS + 4;
 /// Neighbour bits that face up: north and its two diagonals.
 const TOP: u8 = 1 | 1 << 4 | 1 << 7;
 
-/// Appends the base instance for a solid tile to `bases`, and its overlays to
-/// `overlays`. Air tiles produce nothing.
-pub fn emit_tile(world: &World, x: i32, y: i32, bases: &mut Vec<Instance>, overlays: &mut Vec<Instance>) {
+/// Appends a tile's instances to `out`: a solid tile's base and overlays, and the
+/// veil behind open air or a ragged edge.
+pub fn emit_tile(world: &World, x: i32, y: i32, out: &mut Layers) {
     let id = drawn_as(world.get(x, y));
     if id == AIR {
         // A hole shows what is behind it: the backdrop outdoors, nothing at all
@@ -92,18 +125,14 @@ pub fn emit_tile(world: &World, x: i32, y: i32, bases: &mut Vec<Instance>, overl
         // window. A gradient rather than a switch: keying on "is anything above me"
         // put a hard seam between a dug shaft showing sky and untouched rock beside
         // it. Blended like the overlays, and leaving the id as background.
-        let veil = 255 - (world.skyness(x, y) * 255.0) as u8;
-        if veil > 0 {
-            overlays.push(Instance { tint: [0, 0, 0, veil], id: ID_BACKGROUND, ..Instance::tile(x, y, SOLID_MASK, MAT_SKY) });
-        }
+        out.veils.extend(veil(world, x, y));
         return;
     }
     if !is_solid(id) {
         // Torches and the like: drawn whole, and taking no transitions.
-        bases.push(Instance { id: ID_TERRAIN, ..Instance::tile(x, y, SOLID_MASK, atlas_mat(id)) });
+        out.bases.push(Instance { id: ID_TERRAIN, ..Instance::tile(x, y, SOLID_MASK, atlas_mat(id)) });
         return;
     }
-    bases.push(Instance::tile(x, y, SOLID_MASK, atlas_mat(id)));
 
     // Collect the neighbour bitmask per bleeding material, and separately which
     // sides face air, since that is where decoration grows.
@@ -127,6 +156,16 @@ pub fn emit_tile(world: &World, x: i32, y: i32, bases: &mut Vec<Instance>, overl
             None => {}
         }
     }
+
+    // Sides facing air get a ragged edge, on the base and on every overlay of the
+    // tile, so rims and grass follow the bite. Whatever the bite uncovers must look
+    // like the hole beside it, so the tile carries a veil of its own beneath it.
+    let sides = air_bits & SIDES;
+    let edges = if sides == 0 { 0 } else { sides as u32 | if id == STONE { EDGE_BLOCKY } else { 0 } };
+    if edges != 0 {
+        out.veils.extend(veil(world, x, y));
+    }
+    out.bases.push(Instance { edges, ..Instance::tile(x, y, SOLID_MASK, atlas_mat(id)) });
 
     // (precedence, mask bits, material), painted weakest first.
     let mut layers: [(u8, u16, u16); MAX_LAYERS] = [(0, 0, 0); MAX_LAYERS];
@@ -163,25 +202,18 @@ pub fn emit_tile(world: &World, x: i32, y: i32, bases: &mut Vec<Instance>, overl
 
     layers[..layer_count].sort_by_key(|(p, _, _)| *p);
     for &(_, bits, mat) in &layers[..layer_count] {
-        overlays.push(Instance::tile(x, y, bits, mat));
+        out.overlays.push(Instance { edges, ..Instance::tile(x, y, bits, mat) });
     }
 }
 
 /// Rebuilds one chunk's instance lists. Tiles on the chunk border read neighbours
 /// from adjacent chunks, which is why `World::set` bumps their revisions too.
-pub fn build_chunk(
-    world: &World,
-    cx: i32,
-    cy: i32,
-    bases: &mut Vec<Instance>,
-    overlays: &mut Vec<Instance>,
-) {
-    bases.clear();
-    overlays.clear();
+pub fn build_chunk(world: &World, cx: i32, cy: i32, out: &mut Layers) {
+    out.clear();
     let size = crate::world::CHUNK_SIZE;
     for y in cy * size..(cy + 1) * size {
         for x in cx * size..(cx + 1) * size {
-            emit_tile(world, x, y, bases, overlays);
+            emit_tile(world, x, y, out);
         }
     }
 }
@@ -196,6 +228,7 @@ pub fn tinted_box(pos: [f32; 2], size: [f32; 2], tint: [u8; 4], id: u32) -> Inst
         mask: SOLID_MASK,
         mat: atlas::MAT_WHITE,
         tint,
+        edges: 0,
         id,
     }
 }
@@ -203,7 +236,7 @@ pub fn tinted_box(pos: [f32; 2], size: [f32; 2], tint: [u8; 4], id: u32) -> Inst
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tiles::{DECOR_GRASS, DIRT, STONE};
+    use crate::tiles::{DECOR_GRASS, DIRT};
 
     const N: u16 = 1;
     const E: u16 = 1 << 1;
@@ -223,9 +256,14 @@ mod tests {
     }
 
     fn emitted(world: &World, x: i32, y: i32) -> (Vec<Instance>, Vec<Instance>) {
-        let (mut bases, mut overlays) = (Vec::new(), Vec::new());
-        emit_tile(world, x, y, &mut bases, &mut overlays);
-        (bases, overlays)
+        let layers = layers(world, x, y);
+        (layers.bases, layers.overlays)
+    }
+
+    fn layers(world: &World, x: i32, y: i32) -> Layers {
+        let mut out = Layers::default();
+        emit_tile(world, x, y, &mut out);
+        out
     }
 
     #[test]
@@ -330,9 +368,9 @@ mod tests {
     #[test]
     fn air_shows_the_backdrop_and_veils_it_with_depth() {
         let world = World::new(64, 64);
-        let (bases, overlays) = emitted(&world, 32, 32);
-        assert!(bases.is_empty(), "open air draws nothing over the backdrop");
-        assert!(overlays.is_empty(), "and takes no transitions");
+        let open = layers(&world, 32, 32);
+        assert!(open.bases.is_empty(), "open air draws nothing over the backdrop");
+        assert!(open.overlays.is_empty(), "and takes no transitions");
 
         // The veil thickens with depth: a shallow hole still shows the backdrop, a
         // deep one shows nothing. Both matter — veiling immediately makes a dug
@@ -342,11 +380,10 @@ mod tests {
         buried.set(32, 3, AIR);
         buried.set(32, 60, AIR);
 
-        let (_, shallow) = emitted(&buried, 32, 3);
-        assert!(!shallow.iter().any(|o| o.material() == MAT_SKY), "a hole near the surface is unveiled");
-        let (bases, deep) = emitted(&buried, 32, 60);
-        assert!(bases.is_empty());
-        let veil = deep.iter().find(|o| o.material() == MAT_SKY).expect("a deep pocket is veiled");
+        assert!(layers(&buried, 32, 3).veils.is_empty(), "a hole near the surface is unveiled");
+        let deep = layers(&buried, 32, 60);
+        assert!(deep.bases.is_empty());
+        let veil = deep.veils.first().expect("a deep pocket is veiled");
         assert_eq!(veil.tint, [0, 0, 0, 255], "a deep pocket shows nothing behind it");
         assert_eq!(veil.id, ID_BACKGROUND, "air stays background, so terrain against it is outlined");
     }
@@ -361,10 +398,27 @@ mod tests {
     #[test]
     fn a_chunk_build_covers_every_tile_once() {
         let world = solid_world();
-        let (mut bases, mut overlays) = (Vec::new(), Vec::new());
-        build_chunk(&world, 0, 0, &mut bases, &mut overlays);
-        assert_eq!(bases.len(), crate::world::CHUNK_AREA, "every tile emits a base");
+        let mut out = Layers::default();
+        build_chunk(&world, 0, 0, &mut out);
+        assert_eq!(out.bases.len(), crate::world::CHUNK_AREA, "every tile emits a base");
         // The chunk's outer ring borders the world edge, which reads as air.
-        assert!(!overlays.is_empty(), "the world edge should bleed inward");
+        assert!(!out.overlays.is_empty(), "the world edge should bleed inward");
+    }
+
+    #[test]
+    fn faces_to_air_carry_a_ragged_edge_on_every_layer() {
+        let mut world = solid_world();
+        world.snapshot_surface();
+        world.set(32, 59, AIR); // north
+        world.set(33, 59, AIR); // north-east only: an inner corner, not a bitten side
+        let stone = layers(&world, 32, 60);
+        assert_eq!(stone.bases[0].edges, N as u32 | EDGE_BLOCKY, "stone breaks blocky, on its open side only");
+        assert!(stone.overlays.iter().all(|o| o.edges == stone.bases[0].edges), "rims follow the bite");
+        assert_eq!(stone.veils.len(), 1, "a bitten tile deep down veils what the bite uncovers");
+
+        world.set(32, 60, DIRT);
+        assert_eq!(layers(&world, 32, 60).bases[0].edges, N as u32, "dirt crumbles");
+        assert_eq!(layers(&world, 40, 40).bases[0].edges, 0, "enclosed tiles keep straight edges");
+        assert!(layers(&world, 40, 40).veils.is_empty());
     }
 }

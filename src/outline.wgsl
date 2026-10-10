@@ -17,6 +17,9 @@ struct Outline {
 @group(0) @binding(1) var ids: texture_2d<u32>;
 @group(0) @binding(2) var<uniform> outline: Outline;
 
+/// All terrain shares this id (autotile's `ID_TERRAIN`).
+const ID_TERRAIN: u32 = 1u;
+
 /// Samples taken along each beam, and how far toward the sun they look, in tiles.
 const RAY_SAMPLES: i32 = 40;
 const RAY_REACH: f32 = 30.0;
@@ -61,7 +64,10 @@ fn fs_outline(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
                 if any(q < vec2<i32>(0)) || any(q >= size) {
                     continue;
                 }
-                if textureLoad(ids, q, 0).r < mine {
+                let behind = textureLoad(ids, q, 0).r;
+                // Nothing stands outlined on the ground: where terrain lies below,
+                // a trunk's roots and a walker's feet run into it without a sole.
+                if behind < mine && !(behind == ID_TERRAIN && dy > 0) {
                     return outline.colour;
                 }
             }

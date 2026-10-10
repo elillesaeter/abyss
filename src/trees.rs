@@ -29,6 +29,9 @@ const TAPER: f32 = 0.3;
 /// Extra width on the bottom row, so the trunk meets the ground with a flare.
 const FLARE: f32 = 0.35;
 const BRANCH_THICKNESS: f32 = 0.26;
+/// How far the bottom row reaches down into the ground, in tiles: deeper than any
+/// bite in a ragged edge, so a trunk stands planted instead of hovering over one.
+const ROOT_SINK: f32 = 2.0 / 16.0;
 /// Foliage cells per tile along each axis.
 const SUB: i32 = 2;
 /// Foliage thinner than this is left out entirely, which is what gives crowns
@@ -277,6 +280,7 @@ impl Tree {
                     (shade * 0.9 * 255.0) as u8,
                     255,
                 ],
+                edges: 0,
                 id,
             });
         }
@@ -314,13 +318,15 @@ impl Tree {
             };
             let top = self.row_y(i) as f32;
             let (s_top, s_bottom) = (sway((i + 1) as f32), sway(i as f32));
+            let sink = if i == 0 { ROOT_SINK } else { 0.0 };
             out.push(Instance {
                 pos: [centre - w * 0.5 + s_top, top],
                 axis_x: [w, 0.0],
-                axis_y: [s_bottom - s_top, 1.0],
+                axis_y: [s_bottom - s_top, 1.0 + sink],
                 mask: SOLID_MASK,
                 mat: textured(MAT_BARK, [self.x, self.row_y(i)]),
                 tint: [255; 4],
+                edges: 0,
                 id,
             });
         }
@@ -342,6 +348,7 @@ impl Tree {
                 mask: SOLID_MASK,
                 mat: textured(MAT_BARK, [self.x, self.row_y(b.row)]),
                 tint: [255; 4],
+                edges: 0,
                 id,
             });
         }
@@ -969,6 +976,16 @@ mod tests {
         let leaf_ids: Vec<u32> = out.iter().filter(|q| is_leaf(q.mask)).map(|q| q.id).collect();
         assert!(leaf_ids.iter().any(|&id| id < wood) && leaf_ids.iter().any(|&id| id > wood));
         assert!(out.windows(2).all(|w| w[0].id <= w[1].id), "ids grow with draw order");
+    }
+
+    #[test]
+    fn a_trunk_sinks_its_roots_into_the_ground() {
+        let world = world_with_tree(1, 14);
+        let ground = world.forest.trees[0].ground as f32;
+        let mut out = Vec::new();
+        emit(&world, TileRect { x0: 0, y0: 0, x1: 64, y1: 64 }, &mut FIRST_OBJECT_ID.clone(), &mut out);
+        let base = out.iter().filter(|q| q.mask == SOLID_MASK).map(|q| q.pos[1] + q.axis_y[1]).fold(0.0, f32::max);
+        assert!((base - (ground + ROOT_SINK)).abs() < 1e-4, "the trunk reaches below the ground line, to {base}");
     }
 
     #[test]

@@ -26,8 +26,8 @@ use crate::player::{self, Player};
 use crate::trees;
 use crate::world::{CHUNK_SIZE, World};
 
-const INSTANCE_ATTRS: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
-    0 => Float32x2, 1 => Float32x2, 2 => Float32x2, 3 => Uint16x2, 4 => Unorm8x4, 5 => Uint32
+const INSTANCE_ATTRS: [wgpu::VertexAttribute; 7] = wgpu::vertex_attr_array![
+    0 => Float32x2, 1 => Float32x2, 2 => Float32x2, 3 => Uint16x2, 4 => Unorm8x4, 5 => Uint32, 6 => Uint32
 ];
 
 /// Per-pixel object ids, compared by the outline pass.
@@ -100,8 +100,7 @@ struct LightTextures {
 struct ChunkCache {
     /// Revision this cache was built from; `None` means never built.
     revision: Option<u32>,
-    bases: Vec<Instance>,
-    overlays: Vec<Instance>,
+    layers: autotile::Layers,
 }
 
 /// Offscreen captures render in sRGB so the written PNG matches what a window shows.
@@ -140,7 +139,9 @@ pub struct Renderer {
     outline_buffer: wgpu::Buffer,
     format: wgpu::TextureFormat,
     scene: Option<Scene>,
-    /// Where the overlays start and end in `instances`; objects follow them.
+    /// Where the veils end, and where the overlays start and end, in `instances`:
+    /// veils, then bases, then overlays, then objects.
+    veils_end: usize,
     overlays: std::ops::Range<usize>,
     view_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
@@ -454,6 +455,7 @@ impl Renderer {
             outline_buffer,
             format,
             scene: None,
+            veils_end: 0,
             overlays: 0..0,
             view_buffer,
             bind_group,
@@ -657,8 +659,11 @@ impl Renderer {
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
             let (start, end) = (self.overlays.start as u32, self.overlays.end as u32);
+            let veils = self.veils_end as u32;
+            pass.set_pipeline(&self.soft_pipeline);
+            pass.draw(0..6, 0..veils);
             pass.set_pipeline(&self.pipeline);
-            pass.draw(0..6, 0..start);
+            pass.draw(0..6, veils..start);
             pass.set_pipeline(&self.soft_pipeline);
             pass.draw(0..6, start..end);
             pass.set_pipeline(&self.pipeline);
@@ -769,39 +774,39 @@ impl Renderer {
     }
 
     /// Rebuilds stale caches for visible chunks, then copies them into `instances`:
-    /// every base first, then every overlay.
+    /// every veil first, then every base, then every overlay.
     fn assemble(&mut self, world: &World, camera: &Camera) {
         let rect = camera.visible_tiles(world.width(), world.height());
-        let chunks = (
-            rect.x0 / CHUNK_SIZE,
-            rect.y0 / CHUNK_SIZE,
-            ((rect.x1 - 1) / CHUNK_SIZE).min(world.width_chunks() - 1),
-            ((rect.y1 - 1) / CHUNK_SIZE).min(world.height_chunks() - 1),
-        );
-
+        let (x0, y0) = (rect.x0 / CHUNK_SIZE, rect.y0 / CHUNK_SIZE);
+        let x1 = ((rect.x1 - 1) / CHUNK_SIZE).min(world.width_chunks() - 1);
+        let y1 = ((rect.y1 - 1) / CHUNK_SIZE).min(world.height_chunks() - 1);
         self.rebuilt_chunks = 0;
-        self.instances.clear();
-        for cy in chunks.1..=chunks.3 {
-            for cx in chunks.0..=chunks.2 {
+        let visible: Vec<usize> = (y0..=y1)
+            .flat_map(|cy| (x0..=x1).map(move |cx| (cx, cy)))
+            .map(|(cx, cy)| {
                 let index = (cy * world.width_chunks() + cx) as usize;
                 let revision = world.chunk_revision(cx, cy);
                 let cache = &mut self.chunk_caches[index];
                 if cache.revision != Some(revision) {
-                    autotile::build_chunk(world, cx, cy, &mut cache.bases, &mut cache.overlays);
+                    autotile::build_chunk(world, cx, cy, &mut cache.layers);
                     cache.revision = Some(revision);
                     self.rebuilt_chunks += 1;
                 }
-                self.instances.extend_from_slice(&self.chunk_caches[index].bases);
-            }
+                index
+            })
+            .collect();
+
+        self.instances.clear();
+        for &i in &visible {
+            self.instances.extend_from_slice(&self.chunk_caches[i].layers.veils);
+        }
+        self.veils_end = self.instances.len();
+        for &i in &visible {
+            self.instances.extend_from_slice(&self.chunk_caches[i].layers.bases);
         }
         let overlays_start = self.instances.len();
-        for cy in chunks.1..=chunks.3 {
-            for cx in chunks.0..=chunks.2 {
-                let index = (cy * world.width_chunks() + cx) as usize;
-                let overlays = std::mem::take(&mut self.chunk_caches[index].overlays);
-                self.instances.extend_from_slice(&overlays);
-                self.chunk_caches[index].overlays = overlays;
-            }
+        for &i in &visible {
+            self.instances.extend_from_slice(&self.chunk_caches[i].layers.overlays);
         }
         self.overlays = overlays_start..self.instances.len();
     }
