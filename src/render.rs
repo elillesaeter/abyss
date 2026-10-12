@@ -19,14 +19,14 @@ use crate::atlas;
 use crate::autotile::{self, Instance};
 use crate::backdrop::{self, BackdropUniform};
 use crate::camera::Camera;
-use crate::entity::Entities;
-use crate::light::LightMap;
-use crate::sky;
 use crate::character;
 use crate::combat;
 use crate::draw;
+use crate::entity::Entities;
 use crate::icons;
+use crate::light::LightMap;
 use crate::player::{self, Player};
+use crate::sky;
 use crate::trees;
 use crate::world::{CHUNK_SIZE, World};
 
@@ -112,7 +112,12 @@ const CAPTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 /// The backdrop covers every pixel of the scene; black is what the outline pass
 /// clears its target to before overwriting all of it.
-const CLEAR: wgpu::Color = wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 };
+const CLEAR: wgpu::Color = wgpu::Color {
+    r: 0.0,
+    g: 0.0,
+    b: 0.0,
+    a: 1.0,
+};
 const INITIAL_INSTANCES: usize = 64 * 1024;
 
 /// Where frames go. A window is the normal case; the offscreen target exists so
@@ -189,7 +194,11 @@ impl Renderer {
         let (_adapter, device, queue) = request_gpu(&instance, None);
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("offscreen target"),
-            size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -201,7 +210,10 @@ impl Renderer {
             device,
             queue,
             CAPTURE_FORMAT,
-            Target::Offscreen { texture, size: (width, height) },
+            Target::Offscreen {
+                texture,
+                size: (width, height),
+            },
             world,
         )
     }
@@ -240,7 +252,11 @@ impl Renderer {
                 bytes_per_row: Some(atlas_width * 4),
                 rows_per_image: Some(atlas_height),
             },
-            wgpu::Extent3d { width: atlas_width, height: atlas_height, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: atlas_width,
+                height: atlas_height,
+                depth_or_array_layers: 1,
+            },
         );
         let texture_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         // ponytail: nearest filtering keeps art crisp at 1:1 but aliases when zoomed
@@ -331,7 +347,14 @@ impl Renderer {
         let (light, light_view) = new_texture(&device, &queue, LIGHT_FORMAT, [1, 1], &[255; 4]);
         let (sun, sun_view) = new_texture(&device, &queue, SUN_FORMAT, [1, 1], &[0]);
         let bind_group = frame_bind_group(
-            &device, &layout, &view_buffer, &texture_view, &sampler, &light_view, &light_sampler, &sun_view,
+            &device,
+            &layout,
+            &view_buffer,
+            &texture_view,
+            &sampler,
+            &light_view,
+            &light_sampler,
+            &sun_view,
         );
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -364,7 +387,11 @@ impl Renderer {
                             blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                             write_mask: wgpu::ColorWrites::ALL,
                         }),
-                        Some(wgpu::ColorTargetState { format: ID_FORMAT, blend: None, write_mask: ids }),
+                        Some(wgpu::ColorTargetState {
+                            format: ID_FORMAT,
+                            blend: None,
+                            write_mask: ids,
+                        }),
                     ],
                 }),
                 primitive: wgpu::PrimitiveState::default(),
@@ -442,8 +469,7 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
-        let (backdrop_pipeline, backdrop_buffer, backdrop_bind_group) =
-            backdrop_resources(&device, &queue, format);
+        let (backdrop_pipeline, backdrop_buffer, backdrop_bind_group) = backdrop_resources(&device, &queue, format);
 
         let instance_buffer = new_instance_buffer(&device, INITIAL_INSTANCES);
         let chunk_count = (world.width_chunks() * world.height_chunks()) as usize;
@@ -469,7 +495,11 @@ impl Renderer {
             atlas_view: texture_view,
             atlas_sampler: sampler,
             light_sampler,
-            light_textures: LightTextures { light, sun, size: [1, 1] },
+            light_textures: LightTextures {
+                light,
+                sun,
+                size: [1, 1],
+            },
             instance_buffer,
             instance_capacity: INITIAL_INSTANCES,
             instances: Vec::with_capacity(INITIAL_INSTANCES),
@@ -497,8 +527,13 @@ impl Renderer {
         if self.light_textures.size != size {
             let (light_texture, light_view) =
                 new_texture(&self.device, &self.queue, LIGHT_FORMAT, size, light.texels());
-            let (sun, sun_view) =
-                new_texture(&self.device, &self.queue, SUN_FORMAT, light.sun_size(), light.sun_texels());
+            let (sun, sun_view) = new_texture(
+                &self.device,
+                &self.queue,
+                SUN_FORMAT,
+                light.sun_size(),
+                light.sun_texels(),
+            );
             self.bind_group = frame_bind_group(
                 &self.device,
                 &self.bind_layout,
@@ -509,10 +544,19 @@ impl Renderer {
                 &self.light_sampler,
                 &sun_view,
             );
-            self.light_textures = LightTextures { light: light_texture, sun, size };
+            self.light_textures = LightTextures {
+                light: light_texture,
+                sun,
+                size,
+            };
         } else {
             upload(&self.queue, &self.light_textures.light, size, light.texels());
-            upload(&self.queue, &self.light_textures.sun, light.sun_size(), light.sun_texels());
+            upload(
+                &self.queue,
+                &self.light_textures.sun,
+                light.sun_size(),
+                light.sun_texels(),
+            );
         }
     }
 
@@ -527,8 +571,9 @@ impl Renderer {
     ) {
         let frame = match &self.target {
             Target::Window { surface, .. } => match surface.get_current_texture() {
-                wgpu::CurrentSurfaceTexture::Success(frame)
-                | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => Some(frame),
+                wgpu::CurrentSurfaceTexture::Success(frame) | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                    Some(frame)
+                }
                 // Occluded, outdated or lost surfaces resolve themselves on a later frame.
                 _ => return,
             },
@@ -548,9 +593,18 @@ impl Renderer {
         let blink = (player.invulnerable * 12.0) as i32 % 2 == 1;
         if !player.is_dead() && !blink {
             let drawn = player.visual_pos();
-            let parts = autotile::character(drawn[0], drawn[1] + player::HALF[1], player.frame(), &player.look, next_id);
+            let parts = autotile::character(
+                drawn[0],
+                drawn[1] + player::HALF[1],
+                player.frame(),
+                &player.look,
+                next_id,
+            );
             // The sword goes between the body and the near hand that grips it.
-            let hand = character::PARTS.iter().position(|&p| p == character::Part::FrontHand).expect("a front hand");
+            let hand = character::PARTS
+                .iter()
+                .position(|&p| p == character::Part::FrontHand)
+                .expect("a front hand");
             self.instances.extend(&parts[..hand]);
             self.instances.extend(draw::sword(player, next_id));
             self.instances.extend(&parts[hand..]);
@@ -592,7 +646,12 @@ impl Renderer {
                 _pad: 0.0,
                 light_origin: [light.origin()[0] as f32, light.origin()[1] as f32],
                 light_size: [light.size()[0] as f32, light.size()[1] as f32],
-                direct: [lighting.direct[0], lighting.direct[1], lighting.direct[2], lighting.toward[0]],
+                direct: [
+                    lighting.direct[0],
+                    lighting.direct[1],
+                    lighting.direct[2],
+                    lighting.toward[0],
+                ],
             }),
         );
 
@@ -609,7 +668,9 @@ impl Renderer {
         if self.scene.as_ref().is_none_or(|scene| scene.size != size) {
             self.scene = Some(self.new_scene(size));
         }
-        let width = (camera.pixels_per_tile() * OUTLINE_ART_PX / atlas::CELL as f32).round().max(1.0);
+        let width = (camera.pixels_per_tile() * OUTLINE_ART_PX / atlas::CELL as f32)
+            .round()
+            .max(1.0);
         self.queue.write_buffer(
             &self.outline_buffer,
             0,
@@ -646,7 +707,10 @@ impl Renderer {
                     view,
                     depth_slice: None,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(clear),
+                        store: wgpu::StoreOp::Store,
+                    },
                 })
             };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -684,7 +748,10 @@ impl Renderer {
                     view: &target,
                     depth_slice: None,
                     resolve_target: None,
-                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(CLEAR), store: wgpu::StoreOp::Store },
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(CLEAR),
+                        store: wgpu::StoreOp::Store,
+                    },
                 })],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
@@ -730,12 +797,21 @@ impl Renderer {
                     rows_per_image: Some(height),
                 },
             },
-            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
         );
         self.queue.submit([encoder.finish()]);
 
-        buffer.slice(..).map_async(wgpu::MapMode::Read, |r| r.expect("map readback"));
-        self.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None })?;
+        buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, |r| r.expect("map readback"));
+        self.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        })?;
 
         let mapped = buffer.slice(..).get_mapped_range()?;
         let mut pixels = Vec::with_capacity((width * height * 4) as usize);
@@ -757,7 +833,11 @@ impl Renderer {
             self.device
                 .create_texture(&wgpu::TextureDescriptor {
                     label: Some(label),
-                    size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
+                    size: wgpu::Extent3d {
+                        width: size.0,
+                        height: size.1,
+                        depth_or_array_layers: 1,
+                    },
                     mip_level_count: 1,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
@@ -773,12 +853,26 @@ impl Renderer {
             label: Some("outline bind group"),
             layout: &self.outline_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&colour) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&ids) },
-                wgpu::BindGroupEntry { binding: 2, resource: self.outline_buffer.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&colour),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&ids),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.outline_buffer.as_entire_binding(),
+                },
             ],
         });
-        Scene { colour, ids, bind_group, size }
+        Scene {
+            colour,
+            ids,
+            bind_group,
+            size,
+        }
     }
 
     /// Rebuilds stale caches for visible chunks, then copies them into `instances`:
@@ -950,9 +1044,18 @@ fn backdrop_resources(
         label: Some("backdrop bind group"),
         layout: &layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&strips_view) },
-            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&clouds_view) },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&strips_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&clouds_view),
+            },
         ],
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -974,9 +1077,17 @@ fn backdrop_resources(
             entry_point: Some("fs_backdrop"),
             compilation_options: Default::default(),
             targets: &[
-                Some(wgpu::ColorTargetState { format, blend: None, write_mask: wgpu::ColorWrites::ALL }),
+                Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                }),
                 // The id target is already cleared to background.
-                Some(wgpu::ColorTargetState { format: ID_FORMAT, blend: None, write_mask: wgpu::ColorWrites::empty() }),
+                Some(wgpu::ColorTargetState {
+                    format: ID_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::empty(),
+                }),
             ],
         }),
         primitive: wgpu::PrimitiveState::default(),
@@ -1010,12 +1121,30 @@ fn frame_bind_group(
         label: Some("frame bind group"),
         layout,
         entries: &[
-            wgpu::BindGroupEntry { binding: 0, resource: view_buffer.as_entire_binding() },
-            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(atlas_view) },
-            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(atlas_sampler) },
-            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(light_view) },
-            wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(light_sampler) },
-            wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(sun_view) },
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: view_buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(atlas_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(atlas_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(light_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::Sampler(light_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: wgpu::BindingResource::TextureView(sun_view),
+            },
         ],
     })
 }
@@ -1029,7 +1158,11 @@ fn new_texture(
 ) -> (wgpu::Texture, wgpu::TextureView) {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("light"),
-        size: wgpu::Extent3d { width: size[0] as u32, height: size[1] as u32, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width: size[0] as u32,
+            height: size[1] as u32,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -1052,7 +1185,11 @@ fn upload(queue: &wgpu::Queue, texture: &wgpu::Texture, size: [i32; 2], texels: 
             bytes_per_row: Some(size[0] as u32 * bytes),
             rows_per_image: Some(size[1] as u32),
         },
-        wgpu::Extent3d { width: size[0] as u32, height: size[1] as u32, depth_or_array_layers: 1 },
+        wgpu::Extent3d {
+            width: size[0] as u32,
+            height: size[1] as u32,
+            depth_or_array_layers: 1,
+        },
     );
 }
 

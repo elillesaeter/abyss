@@ -88,17 +88,52 @@ const NIGHT: Key = Key {
 
 const KEYS: [Key; 9] = [
     // Sunrise: a cooler pink-gold than sunset.
-    Key { at: 0.0, direct: [0.80, 0.50, 0.38], ambient: [0.26, 0.22, 0.34], top: [0.30, 0.33, 0.62], horizon: [0.98, 0.66, 0.58], stars: 0.15 },
+    Key {
+        at: 0.0,
+        direct: [0.80, 0.50, 0.38],
+        ambient: [0.26, 0.22, 0.34],
+        top: [0.30, 0.33, 0.62],
+        horizon: [0.98, 0.66, 0.58],
+        stars: 0.15,
+    },
     Key { at: 0.06, ..DAY },
     Key { at: 0.56, ..DAY },
     // Sunset: an orange sun under a pink and purple sky, shade gone violet.
-    Key { at: 0.615, direct: [0.95, 0.45, 0.22], ambient: [0.34, 0.20, 0.32], top: [0.42, 0.26, 0.52], horizon: [1.0, 0.56, 0.40], stars: 0.0 },
-    Key { at: 0.64, direct: [0.40, 0.14, 0.10], ambient: [0.16, 0.09, 0.18], top: [0.18, 0.12, 0.32], horizon: [0.62, 0.30, 0.38], stars: 0.3 },
+    Key {
+        at: 0.615,
+        direct: [0.95, 0.45, 0.22],
+        ambient: [0.34, 0.20, 0.32],
+        top: [0.42, 0.26, 0.52],
+        horizon: [1.0, 0.56, 0.40],
+        stars: 0.0,
+    },
+    Key {
+        at: 0.64,
+        direct: [0.40, 0.14, 0.10],
+        ambient: [0.16, 0.09, 0.18],
+        top: [0.18, 0.12, 0.32],
+        horizon: [0.62, 0.30, 0.38],
+        stars: 0.3,
+    },
     Key { at: 0.67, ..NIGHT },
     Key { at: 0.96, ..NIGHT },
     // Before dawn the horizon greys and warms before the sun is up.
-    Key { at: 0.985, direct: [0.10, 0.05, 0.05], ambient: [0.10, 0.09, 0.14], top: [0.10, 0.12, 0.32], horizon: [0.48, 0.34, 0.42], stars: 0.5 },
-    Key { at: 1.0, direct: [0.80, 0.50, 0.38], ambient: [0.26, 0.22, 0.34], top: [0.30, 0.33, 0.62], horizon: [0.98, 0.66, 0.58], stars: 0.15 },
+    Key {
+        at: 0.985,
+        direct: [0.10, 0.05, 0.05],
+        ambient: [0.10, 0.09, 0.14],
+        top: [0.10, 0.12, 0.32],
+        horizon: [0.48, 0.34, 0.42],
+        stars: 0.5,
+    },
+    Key {
+        at: 1.0,
+        direct: [0.80, 0.50, 0.38],
+        ambient: [0.26, 0.22, 0.34],
+        top: [0.30, 0.33, 0.62],
+        horizon: [0.98, 0.66, 0.58],
+        stars: 0.15,
+    },
 ];
 
 impl Sky {
@@ -106,7 +141,9 @@ impl Sky {
     /// the first phase, and each night after it the next.
     pub fn at(day: u32, hour: f32) -> Sky {
         let since_sunrise = (hour - SUNRISE_HOUR).rem_euclid(24.0) / 24.0;
-        Sky { time: (day as f32 + since_sunrise) * DAY_SECONDS }
+        Sky {
+            time: (day as f32 + since_sunrise) * DAY_SECONDS,
+        }
     }
 
     pub fn advance(&mut self, dt: f32) {
@@ -124,12 +161,20 @@ impl Sky {
         let moon_angle = -ARC + 2.0 * ARC * night;
         let phase = ((FIRST_PHASE + day) % MOON_PHASES) as f32 / MOON_PHASES as f32;
         let lit = (1.0 - (phase * std::f32::consts::TAU).cos()) / 2.0;
-        let fade = if t < DAYTIME { 0.0 } else { smoothstep(night / MOON_FADE) * smoothstep((1.0 - night) / MOON_FADE) };
+        let fade = if t < DAYTIME {
+            0.0
+        } else {
+            smoothstep(night / MOON_FADE) * smoothstep((1.0 - night) / MOON_FADE)
+        };
         let moonlight = MOONLIGHT.map(|c| c * lit * fade);
 
         let direct = add(key.direct, moonlight);
         // Whichever body gives more light sets the direction; at dusk both are dim.
-        let angle = if luminance(moonlight) > luminance(key.direct) { moon_angle } else { sun_angle };
+        let angle = if luminance(moonlight) > luminance(key.direct) {
+            moon_angle
+        } else {
+            sun_angle
+        };
         Lighting {
             toward: [angle.sin(), -angle.cos()],
             direct,
@@ -198,11 +243,26 @@ mod tests {
         let dawn = Sky::at(0, 5.0).lighting();
         let noon = Sky::at(0, 12.0).lighting();
         let dusk = Sky::at(0, 19.0).lighting();
-        assert!(dawn.toward[0] < -0.9, "the morning sun is low on the left, {:?}", dawn.toward);
-        assert!(noon.toward[1] < -0.99, "noon light comes from nearly straight up, {:?}", noon.toward);
-        assert!(dusk.toward[0] > 0.9, "the evening sun is low on the right, {:?}", dusk.toward);
+        assert!(
+            dawn.toward[0] < -0.9,
+            "the morning sun is low on the left, {:?}",
+            dawn.toward
+        );
+        assert!(
+            noon.toward[1] < -0.99,
+            "noon light comes from nearly straight up, {:?}",
+            noon.toward
+        );
+        assert!(
+            dusk.toward[0] > 0.9,
+            "the evening sun is low on the right, {:?}",
+            dusk.toward
+        );
         assert!(noon.sun.is_some() && noon.moon.is_none());
-        assert!(Sky::at(0, 0.0).lighting().moon.is_some(), "midnight belongs to the moon");
+        assert!(
+            Sky::at(0, 0.0).lighting().moon.is_some(),
+            "midnight belongs to the moon"
+        );
     }
 
     #[test]
@@ -220,10 +280,22 @@ mod tests {
     #[test]
     fn noon_is_full_daylight_and_sunset_is_warm_against_violet_shade() {
         let noon = Sky::at(0, 12.0).lighting();
-        assert!((total(&noon) - 1.0).abs() < 0.05, "noon should be about full light, got {}", total(&noon));
+        assert!(
+            (total(&noon) - 1.0).abs() < 0.05,
+            "noon should be about full light, got {}",
+            total(&noon)
+        );
         let sunset = Sky::at(0, 19.2).lighting();
-        assert!(sunset.direct[0] > 1.6 * sunset.direct[2], "the low sun is orange: {:?}", sunset.direct);
-        assert!(sunset.ambient[2] >= sunset.ambient[1], "the shade is violet, not orange: {:?}", sunset.ambient);
+        assert!(
+            sunset.direct[0] > 1.6 * sunset.direct[2],
+            "the low sun is orange: {:?}",
+            sunset.direct
+        );
+        assert!(
+            sunset.ambient[2] >= sunset.ambient[1],
+            "the shade is violet, not orange: {:?}",
+            sunset.ambient
+        );
     }
 
     #[test]
@@ -233,8 +305,16 @@ mod tests {
         let new = Sky::at(4, 0.0).lighting();
         assert_eq!(full.phase, 0.5);
         assert_eq!(new.phase, 0.0);
-        assert!(total(&new) < 0.04, "a new moon night is nearly black, got {}", total(&new));
-        assert!(total(&full) > 0.3, "a full moon is enough to see by, got {}", total(&full));
+        assert!(
+            total(&new) < 0.04,
+            "a new moon night is nearly black, got {}",
+            total(&new)
+        );
+        assert!(
+            total(&full) > 0.3,
+            "a full moon is enough to see by, got {}",
+            total(&full)
+        );
         assert!(
             luminance(full.direct) > 4.0 * luminance(full.ambient),
             "full moonlight is mostly direct, so its shadows are clear"

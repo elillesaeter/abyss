@@ -61,7 +61,12 @@ pub struct Camera {
 
 impl Camera {
     pub fn new(pos: [f32; 2], viewport: (u32, u32)) -> Camera {
-        Camera { pos, zoom: DEFAULT_ZOOM, viewport, fit: None }
+        Camera {
+            pos,
+            zoom: DEFAULT_ZOOM,
+            viewport,
+            fit: None,
+        }
     }
 
     pub fn pixels_per_tile(&self) -> f32 {
@@ -123,10 +128,7 @@ impl Camera {
     /// Camera centre rounded to a whole physical pixel.
     pub fn snapped_pos(&self) -> [f32; 2] {
         let ppt = self.pixels_per_tile();
-        [
-            (self.pos[0] * ppt).round() / ppt,
-            (self.pos[1] * ppt).round() / ppt,
-        ]
+        [(self.pos[0] * ppt).round() / ppt, (self.pos[1] * ppt).round() / ppt]
     }
 
     /// Screen pixel of a tile corner, for verifying pixel alignment.
@@ -145,10 +147,7 @@ impl Camera {
         let ppt = self.pixels_per_tile();
         let cam = self.snapped_pos();
         let (cx, cy) = self.center_px();
-        [
-            (px[0] - cx as f32) / ppt + cam[0],
-            (px[1] - cy as f32) / ppt + cam[1],
-        ]
+        [(px[0] - cx as f32) / ppt + cam[0], (px[1] - cy as f32) / ppt + cam[1]]
     }
 
     /// Centres on a target immediately. Used when placing the camera, not per frame.
@@ -161,13 +160,7 @@ impl Camera {
     /// second, so the camera lags briefly instead of being welded to the player.
     /// Framerate independent, and it cannot overshoot: the step is always a
     /// fraction of what is left.
-    pub fn follow_smoothed(
-        &mut self,
-        target: [f32; 2],
-        dt: f32,
-        world_width: i32,
-        world_height: i32,
-    ) {
+    pub fn follow_smoothed(&mut self, target: [f32; 2], dt: f32, world_width: i32, world_height: i32) {
         let t = 1.0 - (-FOLLOW_RATE * dt).exp();
         for axis in 0..2 {
             self.pos[axis] += (target[axis] - self.pos[axis]) * t;
@@ -219,10 +212,7 @@ impl Camera {
 
     pub fn clamp_to_world(&mut self, world_width: i32, world_height: i32) {
         let ppt = self.pixels_per_tile();
-        let half = [
-            self.viewport.0 as f32 / 2.0 / ppt,
-            self.viewport.1 as f32 / 2.0 / ppt,
-        ];
+        let half = [self.viewport.0 as f32 / 2.0 / ppt, self.viewport.1 as f32 / 2.0 / ppt];
         let world = [world_width as f32, world_height as f32];
         for axis in 0..2 {
             self.pos[axis] = if world[axis] <= half[axis] * 2.0 {
@@ -345,7 +335,10 @@ mod tests {
         cam.fit_view(120.0, 70.0);
         let (w, h) = cam.view_tiles();
         assert!(w >= 100.0 && h >= 60.0, "framed only {w:.0}x{h:.0} tiles");
-        assert!(ZOOM_STEPS.contains(&(cam.pixels_per_tile() as u32)), "chose a non-integer step");
+        assert!(
+            ZOOM_STEPS.contains(&(cam.pixels_per_tile() as u32)),
+            "chose a non-integer step"
+        );
     }
 
     #[test]

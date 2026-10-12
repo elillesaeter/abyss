@@ -189,7 +189,9 @@ pub fn reach(icon: Icon, grip: [f32; 2]) -> f32 {
     let (col, row) = (icon.index as u32 % ICON_COLS, icon.index as u32 / ICON_COLS);
     let origin = (col * ICON, ICON_BAND_Y + row * ICON);
     let size = (icon.cells[0] as u32 * ICON, icon.cells[1] as u32 * ICON);
-    farthest(size, grip, |x, y| px[(((origin.1 + y) * WIDTH + origin.0 + x) * 4 + 3) as usize] > 0)
+    farthest(size, grip, |x, y| {
+        px[(((origin.1 + y) * WIDTH + origin.0 + x) * 4 + 3) as usize] > 0
+    })
 }
 
 /// The greatest distance from `grip` to the far edge of an opaque pixel.
@@ -198,7 +200,13 @@ fn farthest(size: (u32, u32), grip: [f32; 2], opaque: impl Fn(u32, u32) -> bool)
     for y in 0..size.1 {
         for x in 0..size.0 {
             if opaque(x, y) {
-                let far = |c: u32, g: f32| if (c as f32 + 0.5) < g { c as f32 - g } else { c as f32 + 1.0 - g };
+                let far = |c: u32, g: f32| {
+                    if (c as f32 + 0.5) < g {
+                        c as f32 - g
+                    } else {
+                        c as f32 + 1.0 - g
+                    }
+                };
                 best = best.max(far(x, grip[0]).hypot(far(y, grip[1])));
             }
         }
@@ -305,7 +313,13 @@ fn heart(p: &mut Paint) {
                 continue;
             }
             let (x, y) = (x as i32, y as i32);
-            let g = if (x == 1 || x == 2) && y == 1 { 255 } else if y >= 5 || x == 8 { 150 } else { 205 };
+            let g = if (x == 1 || x == 2) && y == 1 {
+                255
+            } else if y >= 5 || x == 8 {
+                150
+            } else {
+                205
+            };
             p.grey(3 + x, 4 + y, g, 255);
         }
     }
@@ -378,7 +392,10 @@ mod tests {
         let blade = |len: u32| move |x: u32, y: u32| x == 8 && y >= 30 - len && y < 30;
         let short = farthest((16, 32), [8.5, 30.0], blade(10));
         let long = farthest((16, 32), [8.5, 30.0], blade(20));
-        assert!((short - 10.0).abs() < 0.1 && (long - 20.0).abs() < 0.1, "{short} {long}");
+        assert!(
+            (short - 10.0).abs() < 0.1 && (long - 20.0).abs() < 0.1,
+            "{short} {long}"
+        );
         let sword = reach(SWORD, SWORD_GRIP);
         assert!((24.0..30.0).contains(&sword), "the sword reaches {sword} px");
     }
@@ -396,7 +413,10 @@ mod tests {
             for cy in 0..icon.cells[1] as u16 {
                 for cx in 0..icon.cells[0] as u16 {
                     let cell = icon.index + cy * ICON_COLS as u16 + cx;
-                    assert!(owner.insert(cell, icon.index).is_none(), "{icon:?} overlaps another sprite");
+                    assert!(
+                        owner.insert(cell, icon.index).is_none(),
+                        "{icon:?} overlaps another sprite"
+                    );
                 }
             }
             let p = Paint::on(&mut px, *icon);
@@ -407,7 +427,10 @@ mod tests {
                 }
             }
             assert!(painted > 0, "{icon:?} is blank");
-            assert!(icon.index as u32 / ICON_COLS + icon.cells[1] as u32 <= ROWS, "{icon:?} runs off the band");
+            assert!(
+                icon.index as u32 / ICON_COLS + icon.cells[1] as u32 <= ROWS,
+                "{icon:?} runs off the band"
+            );
         }
     }
 
@@ -420,9 +443,15 @@ mod tests {
             let (origin, size) = (p.origin, p.size);
             let alpha = |x: u32, y: u32| px[(((origin.1 + y) * WIDTH + origin.0 + x) * 4 + 3) as usize];
             let left = (size.0 - w) / 2;
-            assert!(alpha(left + 1, size.1 - 1) > 0, "a {w} px cube should touch its cells' bottom");
+            assert!(
+                alpha(left + 1, size.1 - 1) > 0,
+                "a {w} px cube should touch its cells' bottom"
+            );
             let middle = alpha(left + w / 3, size.1 - w / 2);
-            assert!(middle > 100 && middle < 230, "the jelly's middle should be partly see-through: {middle}");
+            assert!(
+                middle > 100 && middle < 230,
+                "the jelly's middle should be partly see-through: {middle}"
+            );
         }
     }
 }

@@ -10,9 +10,9 @@
 //! sides, so grass is a skin on dirt rather than a block of its own.
 
 use crate::atlas::{self, DIRS, SOLID_MASK};
-use crate::tiles::{AIR, DECOR_TYPES, STONE, TileId, atlas_mat, drawn_as, is_solid, precedence};
 use crate::atlas::{MAT_AIR_SHADOW, MAT_RIM, MAT_SKY, THIN_MASKS};
 use crate::character::{Appearance, PARTS, sprite_index};
+use crate::tiles::{AIR, DECOR_TYPES, STONE, TileId, atlas_mat, drawn_as, is_solid, precedence};
 use crate::world::World;
 
 #[repr(C)]
@@ -90,7 +90,11 @@ impl Layers {
 /// A black quad over one tile, as opaque as the tile is far from the sky.
 fn veil(world: &World, x: i32, y: i32) -> Option<Instance> {
     let alpha = 255 - (world.skyness(x, y) * 255.0) as u8;
-    (alpha > 0).then(|| Instance { tint: [0, 0, 0, alpha], id: ID_BACKGROUND, ..Instance::tile(x, y, SOLID_MASK, MAT_SKY) })
+    (alpha > 0).then(|| Instance {
+        tint: [0, 0, 0, alpha],
+        id: ID_BACKGROUND,
+        ..Instance::tile(x, y, SOLID_MASK, MAT_SKY)
+    })
 }
 
 impl Instance {
@@ -149,7 +153,10 @@ pub fn emit_tile(world: &World, x: i32, y: i32, out: &mut Layers) {
     }
     if !is_solid(id) {
         // Torches and the like: drawn whole, and taking no transitions.
-        out.bases.push(Instance { id: ID_TERRAIN, ..Instance::tile(x, y, SOLID_MASK, atlas_mat(id)) });
+        out.bases.push(Instance {
+            id: ID_TERRAIN,
+            ..Instance::tile(x, y, SOLID_MASK, atlas_mat(id))
+        });
         return;
     }
 
@@ -180,11 +187,18 @@ pub fn emit_tile(world: &World, x: i32, y: i32, out: &mut Layers) {
     // tile, so rims and grass follow the bite. Whatever the bite uncovers must look
     // like the hole beside it, so the tile carries a veil of its own beneath it.
     let sides = air_bits & SIDES;
-    let edges = if sides == 0 { 0 } else { sides as u32 | if id == STONE { EDGE_BLOCKY } else { 0 } };
+    let edges = if sides == 0 {
+        0
+    } else {
+        sides as u32 | if id == STONE { EDGE_BLOCKY } else { 0 }
+    };
     if edges != 0 {
         out.veils.extend(veil(world, x, y));
     }
-    out.bases.push(Instance { edges, ..Instance::tile(x, y, SOLID_MASK, atlas_mat(id)) });
+    out.bases.push(Instance {
+        edges,
+        ..Instance::tile(x, y, SOLID_MASK, atlas_mat(id))
+    });
 
     // (precedence, mask bits, material), painted weakest first.
     let mut layers: [(u8, u16, u16); MAX_LAYERS] = [(0, 0, 0); MAX_LAYERS];
@@ -221,7 +235,10 @@ pub fn emit_tile(world: &World, x: i32, y: i32, out: &mut Layers) {
 
     layers[..layer_count].sort_by_key(|(p, _, _)| *p);
     for &(_, bits, mat) in &layers[..layer_count] {
-        out.overlays.push(Instance { edges, ..Instance::tile(x, y, bits, mat) });
+        out.overlays.push(Instance {
+            edges,
+            ..Instance::tile(x, y, bits, mat)
+        });
     }
 }
 
@@ -237,12 +254,28 @@ pub fn build_chunk(world: &World, cx: i32, cy: i32, out: &mut Layers) {
     }
 }
 
-
 /// A sprite from the icon grid on any quad: the axes span its whole block of
 /// cells, so they can rotate, mirror or squash it.
-pub fn icon(icon: crate::icons::Icon, pos: [f32; 2], axis_x: [f32; 2], axis_y: [f32; 2], tint: [u8; 4], flags: u32, id: u32) -> Instance {
+pub fn icon(
+    icon: crate::icons::Icon,
+    pos: [f32; 2],
+    axis_x: [f32; 2],
+    axis_y: [f32; 2],
+    tint: [u8; 4],
+    flags: u32,
+    id: u32,
+) -> Instance {
     let cells = (icon.cells[0] as u32) << 12 | (icon.cells[1] as u32) << 16;
-    Instance { pos, axis_x, axis_y, mask: SOLID_MASK, mat: icon.index, tint, edges: ICON | cells | flags, id }
+    Instance {
+        pos,
+        axis_x,
+        axis_y,
+        mask: SOLID_MASK,
+        mat: icon.index,
+        tint,
+        edges: ICON | cells | flags,
+        id,
+    }
 }
 
 /// The player and other sprites, until they have atlas cells of their own.
@@ -263,9 +296,22 @@ pub fn tinted_box(pos: [f32; 2], size: [f32; 2], tint: [u8; 4], id: u32) -> Inst
 /// back to front, each tinted by the appearance. They share one id so the
 /// outline runs round the whole figure, not between its parts. Mirrored by
 /// running the x axis leftward from the right edge.
-pub fn character(x: f32, feet: f32, frame: crate::player::Frame, look: &Appearance, id: u32) -> [Instance; PARTS.len()] {
-    let (w, h) = (atlas::FRAME_W as f32 / atlas::CELL as f32, atlas::FRAME_H as f32 / atlas::CELL as f32);
-    let (left, width) = if frame.mirrored { (x + w * 0.5, -w) } else { (x - w * 0.5, w) };
+pub fn character(
+    x: f32,
+    feet: f32,
+    frame: crate::player::Frame,
+    look: &Appearance,
+    id: u32,
+) -> [Instance; PARTS.len()] {
+    let (w, h) = (
+        atlas::FRAME_W as f32 / atlas::CELL as f32,
+        atlas::FRAME_H as f32 / atlas::CELL as f32,
+    );
+    let (left, width) = if frame.mirrored {
+        (x + w * 0.5, -w)
+    } else {
+        (x - w * 0.5, w)
+    };
     PARTS.map(|part| Instance {
         pos: [left, feet - h],
         axis_x: [width, 0.0],
@@ -287,8 +333,26 @@ mod tests {
     fn a_character_stands_on_its_feet_and_mirrors_by_flipping_its_quads() {
         use crate::player::Frame;
         let look = Appearance::default();
-        let right = character(10.0, 20.0, Frame { index: 3, mirrored: false }, &look, 5);
-        let left = character(10.0, 20.0, Frame { index: 3, mirrored: true }, &look, 5);
+        let right = character(
+            10.0,
+            20.0,
+            Frame {
+                index: 3,
+                mirrored: false,
+            },
+            &look,
+            5,
+        );
+        let left = character(
+            10.0,
+            20.0,
+            Frame {
+                index: 3,
+                mirrored: true,
+            },
+            &look,
+            5,
+        );
         for (r, l) in right.iter().zip(&left) {
             assert_eq!((r.edges, r.id), (SPRITE, 5), "one id for the whole figure");
             assert_eq!(r.mat, l.mat);
@@ -337,7 +401,10 @@ mod tests {
         let (bases, overlays) = emitted(&world, 32, 32);
         assert_eq!(bases.len(), 1);
         assert_eq!(bases[0].mask, SOLID_MASK);
-        assert_eq!(bases[0].id, ID_TERRAIN, "every material is one terrain object: no line where they blend");
+        assert_eq!(
+            bases[0].id, ID_TERRAIN,
+            "every material is one terrain object: no line where they blend"
+        );
         assert_eq!(bases[0].material(), atlas_mat(STONE));
         assert!(overlays.is_empty(), "an enclosed tile needs no overlay");
     }
@@ -348,7 +415,11 @@ mod tests {
         world.set(32, 31, AIR);
         let (_, overlays) = emitted(&world, 32, 32);
         assert_eq!(overlays.len(), 1);
-        assert_eq!(overlays[0].material(), MAT_RIM, "a face to the sky above gets the lit rim");
+        assert_eq!(
+            overlays[0].material(),
+            MAT_RIM,
+            "a face to the sky above gets the lit rim"
+        );
         assert_eq!(overlays[0].mask, THIN_MASKS + N, "expected only the north bit");
     }
 
@@ -369,8 +440,15 @@ mod tests {
         }
         let (_, overlays) = emitted(&world, 32, 32);
         assert_eq!(overlays.len(), 2, "one lip quad and one rim quad, however many sides");
-        assert_eq!((overlays[0].material(), overlays[0].mask), (MAT_AIR_SHADOW, THIN_MASKS + (E | S | W)));
-        assert_eq!((overlays[1].material(), overlays[1].mask), (MAT_RIM, THIN_MASKS + (N | NE)), "the rim paints over the lip");
+        assert_eq!(
+            (overlays[0].material(), overlays[0].mask),
+            (MAT_AIR_SHADOW, THIN_MASKS + (E | S | W))
+        );
+        assert_eq!(
+            (overlays[1].material(), overlays[1].mask),
+            (MAT_RIM, THIN_MASKS + (N | NE)),
+            "the rim paints over the lip"
+        );
     }
 
     #[test]
@@ -399,7 +477,11 @@ mod tests {
         assert_eq!(overlays.len(), 2, "grass and the air edge both apply");
         assert_eq!(overlays[0].material(), grass, "grass paints before the air edge");
         assert_eq!(overlays[0].mask, N, "grass follows the air-facing sides");
-        assert_eq!(overlays[1].material(), MAT_RIM, "the lit rim paints last, over the grass");
+        assert_eq!(
+            overlays[1].material(),
+            MAT_RIM,
+            "the lit rim paints last, over the grass"
+        );
     }
 
     #[test]
@@ -445,19 +527,31 @@ mod tests {
         buried.set(32, 3, AIR);
         buried.set(32, 60, AIR);
 
-        assert!(layers(&buried, 32, 3).veils.is_empty(), "a hole near the surface is unveiled");
+        assert!(
+            layers(&buried, 32, 3).veils.is_empty(),
+            "a hole near the surface is unveiled"
+        );
         let deep = layers(&buried, 32, 60);
         assert!(deep.bases.is_empty());
         let veil = deep.veils.first().expect("a deep pocket is veiled");
         assert_eq!(veil.tint, [0, 0, 0, 255], "a deep pocket shows nothing behind it");
-        assert_eq!(veil.id, ID_BACKGROUND, "air stays background, so terrain against it is outlined");
+        assert_eq!(
+            veil.id, ID_BACKGROUND,
+            "air stays background, so terrain against it is outlined"
+        );
     }
 
     #[test]
     fn every_mask_an_overlay_can_reference_exists_in_the_atlas() {
-        assert!(u16::from(u8::MAX) < atlas::MASK_COUNT, "8-bit masks must be addressable");
+        assert!(
+            u16::from(u8::MAX) < atlas::MASK_COUNT,
+            "8-bit masks must be addressable"
+        );
         assert!(SOLID_MASK < atlas::MASK_COUNT);
-        assert!(THIN_MASKS + u16::from(u8::MAX) < atlas::MASK_COUNT, "every thin edge must be addressable");
+        assert!(
+            THIN_MASKS + u16::from(u8::MAX) < atlas::MASK_COUNT,
+            "every thin edge must be addressable"
+        );
     }
 
     #[test]
@@ -477,13 +571,28 @@ mod tests {
         world.set(32, 59, AIR); // north
         world.set(33, 59, AIR); // north-east only: an inner corner, not a bitten side
         let stone = layers(&world, 32, 60);
-        assert_eq!(stone.bases[0].edges, N as u32 | EDGE_BLOCKY, "stone breaks blocky, on its open side only");
-        assert!(stone.overlays.iter().all(|o| o.edges == stone.bases[0].edges), "rims follow the bite");
-        assert_eq!(stone.veils.len(), 1, "a bitten tile deep down veils what the bite uncovers");
+        assert_eq!(
+            stone.bases[0].edges,
+            N as u32 | EDGE_BLOCKY,
+            "stone breaks blocky, on its open side only"
+        );
+        assert!(
+            stone.overlays.iter().all(|o| o.edges == stone.bases[0].edges),
+            "rims follow the bite"
+        );
+        assert_eq!(
+            stone.veils.len(),
+            1,
+            "a bitten tile deep down veils what the bite uncovers"
+        );
 
         world.set(32, 60, DIRT);
         assert_eq!(layers(&world, 32, 60).bases[0].edges, N as u32, "dirt crumbles");
-        assert_eq!(layers(&world, 40, 40).bases[0].edges, 0, "enclosed tiles keep straight edges");
+        assert_eq!(
+            layers(&world, 40, 40).bases[0].edges,
+            0,
+            "enclosed tiles keep straight edges"
+        );
         assert!(layers(&world, 40, 40).veils.is_empty());
     }
 }

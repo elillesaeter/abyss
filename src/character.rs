@@ -152,7 +152,12 @@ fn pose(frame: u16) -> Pose {
         frames::FALL => (limb(-0.3, 0.2), limb(0.3, 0.3), limb(-2.3, -0.2), limb(2.3, 0.2)),
         f => return swing_pose(f.saturating_sub(frames::USE[0]) as f32 / (frames::USE.len() - 1) as f32),
     };
-    Pose { back_leg, front_leg, back_arm, front_arm }
+    Pose {
+        back_leg,
+        front_leg,
+        back_arm,
+        front_arm,
+    }
 }
 
 /// The swing's arc, as the front arm's angle from hanging down: from reaching
@@ -205,7 +210,10 @@ fn skeleton(pose: &Pose) -> Skeleton {
         let elbow = joint(shoulder, l.angle, UPPER_ARM);
         [shoulder, elbow, joint(elbow, l.angle + l.bend, FOREARM)]
     };
-    let mut legs = [leg([HIP[0] - 2.0, HIP[1]], pose.back_leg), leg([HIP[0] + 2.0, HIP[1]], pose.front_leg)];
+    let mut legs = [
+        leg([HIP[0] - 2.0, HIP[1]], pose.back_leg),
+        leg([HIP[0] + 2.0, HIP[1]], pose.front_leg),
+    ];
     let lowest = legs[0][2][1].max(legs[1][2][1]);
     let drop = (ANKLE_Y - lowest).round() as i32;
     for leg in &mut legs {
@@ -214,7 +222,10 @@ fn skeleton(pose: &Pose) -> Skeleton {
         }
     }
     let down = |p: [f32; 2]| [p[0], p[1] + drop as f32];
-    let arms = [arm(down([SHOULDER[0] - 1.0, SHOULDER[1]]), pose.back_arm), arm(down(SHOULDER), pose.front_arm)];
+    let arms = [
+        arm(down([SHOULDER[0] - 1.0, SHOULDER[1]]), pose.back_arm),
+        arm(down(SHOULDER), pose.front_arm),
+    ];
     Skeleton { drop, legs, arms }
 }
 
@@ -294,7 +305,10 @@ fn paint_part(part: Part, s: &Skeleton) -> Canvas {
     let hand = |c: &mut Canvas, arm: &[[f32; 2]; 3], dark| c.bar(arm[2], arm[2], HAND_R, dark);
     let sleeve = |c: &mut Canvas, arm: &[[f32; 2]; 3], dark| {
         let [shoulder, elbow, hand] = *arm;
-        let wrist = [hand[0] + (elbow[0] - hand[0]) * 0.25, hand[1] + (elbow[1] - hand[1]) * 0.25];
+        let wrist = [
+            hand[0] + (elbow[0] - hand[0]) * 0.25,
+            hand[1] + (elbow[1] - hand[1]) * 0.25,
+        ];
         c.bar(shoulder, elbow, SLEEVE_R, dark);
         c.bar(elbow, wrist, SLEEVE_R - 0.2, dark);
     };
@@ -444,7 +458,10 @@ mod tests {
                 let (ox, oy) = cell(row, frame);
                 for (x, y) in pixels {
                     let i = (((oy + y) * WIDTH + ox + x) * 4) as usize;
-                    assert!(px[i] == px[i + 1] && px[i + 1] == px[i + 2], "{part:?} must be grey so a tint colours it");
+                    assert!(
+                        px[i] == px[i + 1] && px[i + 1] == px[i + 2],
+                        "{part:?} must be grey so a tint colours it"
+                    );
                 }
             }
         }
@@ -475,7 +492,10 @@ mod tests {
             v.iter().max().unwrap() - v.iter().min().unwrap() + 1
         };
         let head_tall = extent(Part::Skin, 1);
-        assert!(extent(Part::Shirt, 0) >= head_tall, "the torso is as wide as the head is tall");
+        assert!(
+            extent(Part::Shirt, 0) >= head_tall,
+            "the torso is as wide as the head is tall"
+        );
         assert!(head_tall * 3 >= 42, "the head is about a third of the figure");
         assert!(extent(Part::FrontSleeve, 0) >= 5, "arms are thick");
         // Mid-stride, where the legs part, each shin is a solid run at least 7 wide.
@@ -483,11 +503,18 @@ mod tests {
         let apart = *frames::WALK
             .iter()
             .max_by(|&&a, &&b| {
-                let gap = |f| { let s = skeleton(&pose(f)); (s.legs[1][2][0] - s.legs[0][2][0]).abs() };
+                let gap = |f| {
+                    let s = skeleton(&pose(f));
+                    (s.legs[1][2][0] - s.legs[0][2][0]).abs()
+                };
                 gap(a).total_cmp(&gap(b))
             })
             .unwrap();
-        let mut xs: Vec<u32> = opaque(&px, Part::Trousers, apart).iter().filter(|p| p.1 == row).map(|p| p.0).collect();
+        let mut xs: Vec<u32> = opaque(&px, Part::Trousers, apart)
+            .iter()
+            .filter(|p| p.1 == row)
+            .map(|p| p.0)
+            .collect();
         xs.sort();
         let runs = xs.windows(2).filter(|w| w[1] != w[0] + 1).count() + 1;
         assert_eq!(runs, 2, "the legs should part mid-stride: {xs:?}");
@@ -505,7 +532,10 @@ mod tests {
             .map(|k| swing_hand(k as f32 / (frames::USE.len() - 1) as f32).0)
             .collect();
         for w in hands.windows(2) {
-            assert!((w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]) < 3.5, "hand jumps between frames: {w:?}");
+            assert!(
+                (w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]) < 3.5,
+                "hand jumps between frames: {w:?}"
+            );
         }
         // It starts behind and above the shoulder and ends low in front.
         let (start, end) = (swing_hand(0.0).0, swing_hand(1.0).0);
@@ -520,13 +550,19 @@ mod tests {
         let s = |f| skeleton(&pose(f));
         let gap = |f| (s(f).legs[1][2][0] - s(f).legs[0][2][0]).abs();
         let gaps: Vec<f32> = frames::WALK.iter().map(|&f| gap(f)).collect();
-        let (lo, hi) = gaps.iter().fold((f32::MAX, 0.0f32), |(lo, hi), &g| (lo.min(g), hi.max(g)));
+        let (lo, hi) = gaps
+            .iter()
+            .fold((f32::MAX, 0.0f32), |(lo, hi), &g| (lo.min(g), hi.max(g)));
         assert!(hi - lo > 4.0, "a stride should open several pixels: {gaps:?}");
     }
 
     #[test]
     fn each_part_takes_its_colour_from_the_appearance() {
-        let look = Appearance { hair: [200, 10, 10], shoes: [1, 2, 3], ..Appearance::default() };
+        let look = Appearance {
+            hair: [200, 10, 10],
+            shoes: [1, 2, 3],
+            ..Appearance::default()
+        };
         assert_eq!(look.tint(Part::Hair), [200, 10, 10, 255]);
         assert_eq!(look.tint(Part::Shoes), [1, 2, 3, 255]);
         assert_eq!(look.tint(Part::FrontSleeve), look.tint(Part::Shirt));
@@ -538,6 +574,9 @@ mod tests {
     fn a_sprite_index_finds_its_part_row_and_frame() {
         assert_eq!(sprite_index(Part::BackHand, 3), 3);
         let k = sprite_index(Part::Hair, frames::FALL) as u32;
-        assert_eq!(cell(PARTS.iter().position(|&p| p == Part::Hair).unwrap(), frames::FALL), ((k % FRAME_COLS) * FRAME_W, SPRITE_BAND_Y + (k / FRAME_COLS) * FRAME_H));
+        assert_eq!(
+            cell(PARTS.iter().position(|&p| p == Part::Hair).unwrap(), frames::FALL),
+            ((k % FRAME_COLS) * FRAME_W, SPRITE_BAND_Y + (k / FRAME_COLS) * FRAME_H)
+        );
     }
 }

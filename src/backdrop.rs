@@ -87,11 +87,67 @@ pub struct BackdropSet {
 
 pub const FOREST: BackdropSet = BackdropSet {
     layers: [
-        Layer { shape: Shape::Clouds { wisps: 0.55, soft: true }, factor: 0.04, baseline: 26.0, height: 12.0, colour: [238, 242, 250], haze: 0.35, drift: 0.4, foot_haze: 0.0, mist: false },
-        Layer { shape: Shape::Ridges, factor: 0.1, baseline: -4.0, height: 34.0, colour: [84, 104, 146], haze: 0.55, drift: 0.0, foot_haze: 0.6, mist: false },
-        Layer { shape: Shape::Clouds { wisps: 0.12, soft: false }, factor: 0.18, baseline: 16.0, height: 12.0, colour: [252, 252, 255], haze: 0.08, drift: 1.0, foot_haze: 0.0, mist: false },
-        Layer { shape: Shape::Treeline, factor: 0.35, baseline: 3.0, height: 12.0, colour: [40, 84, 74], haze: 0.32, drift: 0.0, foot_haze: 0.4, mist: true },
-        Layer { shape: Shape::Hills, factor: 0.6, baseline: -6.0, height: 14.0, colour: [56, 102, 50], haze: 0.1, drift: 0.0, foot_haze: 0.15, mist: true },
+        Layer {
+            shape: Shape::Clouds {
+                wisps: 0.55,
+                soft: true,
+            },
+            factor: 0.04,
+            baseline: 26.0,
+            height: 12.0,
+            colour: [238, 242, 250],
+            haze: 0.35,
+            drift: 0.4,
+            foot_haze: 0.0,
+            mist: false,
+        },
+        Layer {
+            shape: Shape::Ridges,
+            factor: 0.1,
+            baseline: -4.0,
+            height: 34.0,
+            colour: [84, 104, 146],
+            haze: 0.55,
+            drift: 0.0,
+            foot_haze: 0.6,
+            mist: false,
+        },
+        Layer {
+            shape: Shape::Clouds {
+                wisps: 0.12,
+                soft: false,
+            },
+            factor: 0.18,
+            baseline: 16.0,
+            height: 12.0,
+            colour: [252, 252, 255],
+            haze: 0.08,
+            drift: 1.0,
+            foot_haze: 0.0,
+            mist: false,
+        },
+        Layer {
+            shape: Shape::Treeline,
+            factor: 0.35,
+            baseline: 3.0,
+            height: 12.0,
+            colour: [40, 84, 74],
+            haze: 0.32,
+            drift: 0.0,
+            foot_haze: 0.4,
+            mist: true,
+        },
+        Layer {
+            shape: Shape::Hills,
+            factor: 0.6,
+            baseline: -6.0,
+            height: 14.0,
+            colour: [56, 102, 50],
+            haze: 0.1,
+            drift: 0.0,
+            foot_haze: 0.15,
+            mist: true,
+        },
     ],
     seed: 0xF0_2E57,
 };
@@ -209,7 +265,11 @@ impl BackdropSet {
         for (i, layer) in self.layers.iter().enumerate() {
             if let Shape::Clouds { wisps, .. } = layer.shape {
                 let plan = cloud_plan(wisps, self.seed ^ hash(self.seed, i as i64));
-                out.extend(cloud_density(&plan, self.seed ^ i as u64).iter().map(|d| (d * 255.0).round() as u8));
+                out.extend(
+                    cloud_density(&plan, self.seed ^ i as u64)
+                        .iter()
+                        .map(|d| (d * 255.0).round() as u8),
+                );
             }
         }
         out
@@ -254,7 +314,13 @@ fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
 }
 
 fn linear(c: [f32; 3]) -> [f32; 4] {
-    let l = c.map(|v| if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) });
+    let l = c.map(|v| {
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    });
     [l[0], l[1], l[2], 1.0]
 }
 
@@ -276,9 +342,7 @@ fn silhouette(layer: &Layer, seed: u64) -> Vec<[f32; 2]> {
             })
             .collect(),
         Shape::Treeline => {
-            let ground_at: Vec<f32> = (0..STRIP)
-                .map(|x| tall * (0.1 + 0.25 * noise(seed, x, 512)))
-                .collect();
+            let ground_at: Vec<f32> = (0..STRIP).map(|x| tall * (0.1 + 0.25 * noise(seed, x, 512))).collect();
             let mut top = ground_at.clone();
             let mut x = 0;
             let mut i = 0;
@@ -314,8 +378,13 @@ fn silhouette(layer: &Layer, seed: u64) -> Vec<[f32; 2]> {
 /// Which cloud map a layer reads, if it is a cloud layer: they are numbered in
 /// order back to front.
 fn cloud_slot(layers: &[Layer], layer: &Layer) -> Option<usize> {
-    matches!(layer.shape, Shape::Clouds { .. })
-        .then(|| layers.iter().take_while(|l| !std::ptr::eq(*l, layer)).filter(|l| matches!(l.shape, Shape::Clouds { .. })).count())
+    matches!(layer.shape, Shape::Clouds { .. }).then(|| {
+        layers
+            .iter()
+            .take_while(|l| !std::ptr::eq(*l, layer))
+            .filter(|l| matches!(l.shape, Shape::Clouds { .. }))
+            .count()
+    })
 }
 
 /// Where the clouds of one layer go: in clusters, like crowns in a wood, with
@@ -331,7 +400,13 @@ fn cloud_plan(wisps: f32, seed: u64) -> Vec<Cloud> {
         for c in 0..count {
             let q = |k: i64| unit(seed ^ 0xC10D, i * 16 + c, k);
             let roll = q(0);
-            let kind = if roll < wisps { CloudKind::Wisp } else if roll < wisps + 0.2 { CloudKind::Bank } else { CloudKind::Heap };
+            let kind = if roll < wisps {
+                CloudKind::Wisp
+            } else if roll < wisps + 0.2 {
+                CloudKind::Bank
+            } else {
+                CloudKind::Heap
+            };
             // Mostly small and middling, now and then a big one.
             let size = q(1).powf(1.6);
             let width = match kind {
@@ -344,7 +419,13 @@ fn cloud_plan(wisps: f32, seed: u64) -> Vec<Cloud> {
                 CloudKind::Bank => 10.0 + 90.0 * q(2),
                 CloudKind::Wisp => 30.0 + 130.0 * q(2),
             };
-            plan.push(Cloud { kind, x: x + (q(3) - 0.5) * spread, base, width, seed: hash(seed, i * 16 + c) });
+            plan.push(Cloud {
+                kind,
+                x: x + (q(3) - 0.5) * spread,
+                base,
+                width,
+                seed: hash(seed, i * 16 + c),
+            });
         }
         x += spread + 160.0 + 640.0 * r(2) * r(2);
         i += 1;
@@ -388,7 +469,14 @@ fn cloud_density(plan: &[Cloud], seed: u64) -> Vec<f32> {
                     let t = p as f32 / (puffs - 1) as f32;
                     let mid = 1.0 - (2.0 * t - 1.0).abs();
                     let rad = (5.0 + tall * (0.2 + 0.3 * mid) * (0.8 + 0.4 * r(10 + p))).min(room * 0.5);
-                    blob(cloud.x - half * 0.9 + cloud.width * 0.9 * t, cloud.base + rad * 0.9, rad * 1.2, rad, 1.0, 0.0);
+                    blob(
+                        cloud.x - half * 0.9 + cloud.width * 0.9 * t,
+                        cloud.base + rad * 0.9,
+                        rad * 1.2,
+                        rad,
+                        1.0,
+                        0.0,
+                    );
                 }
                 for p in 0..1 + (r(2) * 3.0) as i64 {
                     let rad = tall * (0.28 + 0.14 * r(20 + p));
@@ -403,7 +491,14 @@ fn cloud_density(plan: &[Cloud], seed: u64) -> Vec<f32> {
                     let t = p as f32 / (pieces - 1) as f32;
                     let rx = 30.0 + 40.0 * r(10 + p);
                     let ry = thick * (0.6 + 0.6 * r(20 + p)) * (1.0 - 0.5 * (2.0 * t - 1.0).abs());
-                    blob(cloud.x - half + cloud.width * t, cloud.base + ry + (r(30 + p) - 0.5) * 6.0, rx, ry.max(3.0), 0.85, 0.0);
+                    blob(
+                        cloud.x - half + cloud.width * t,
+                        cloud.base + ry + (r(30 + p) - 0.5) * 6.0,
+                        rx,
+                        ry.max(3.0),
+                        0.85,
+                        0.0,
+                    );
                 }
             }
             CloudKind::Wisp => {
@@ -412,7 +507,14 @@ fn cloud_density(plan: &[Cloud], seed: u64) -> Vec<f32> {
                     let rx = 25.0 + half * 0.6 * r(10 + p);
                     let ry = 2.5 + 4.0 * r(20 + p);
                     let along = (r(30 + p) - 0.5) * cloud.width;
-                    blob(cloud.x + along, cloud.base + along * 0.06 + (r(40 + p) - 0.5) * 10.0, rx, ry, 0.45 + 0.2 * r(50 + p), slant);
+                    blob(
+                        cloud.x + along,
+                        cloud.base + along * 0.06 + (r(40 + p) - 0.5) * 10.0,
+                        rx,
+                        ry,
+                        0.45 + 0.2 * r(50 + p),
+                        slant,
+                    );
                 }
             }
         }
@@ -476,13 +578,22 @@ mod tests {
             assert_eq!(layer_height(camera - 10.0, camera, horizon, 0.0), 10.0);
         }
         // Factor 1 moves with the world: a world row always shows the same height.
-        assert_eq!(layer_height(190.0, 150.0, horizon, 1.0), layer_height(190.0, 260.0, horizon, 1.0));
+        assert_eq!(
+            layer_height(190.0, 150.0, horizon, 1.0),
+            layer_height(190.0, 260.0, horizon, 1.0)
+        );
         // With the camera on the horizon every layer agrees, whatever its factor.
-        assert_eq!(layer_height(190.0, horizon, horizon, 0.1), layer_height(190.0, horizon, horizon, 0.6));
+        assert_eq!(
+            layer_height(190.0, horizon, horizon, 0.1),
+            layer_height(190.0, horizon, horizon, 0.6)
+        );
         // Climbing 10 tiles sinks a far layer less than a near one: the same screen
         // row now shows a higher part of the layer, by `factor` of the climb.
         let sink = |factor| layer_height(180.0, 190.0, horizon, factor) - layer_height(190.0, 200.0, horizon, factor);
-        assert!(sink(0.1) < sink(0.6), "the far layer should sink less on screen as you climb");
+        assert!(
+            sink(0.1) < sink(0.6),
+            "the far layer should sink less on screen as you climb"
+        );
     }
 
     #[test]
@@ -490,9 +601,15 @@ mod tests {
         let camera = Camera::new([500.0, 200.0], (1280, 720));
         let [dawn, noon, dusk] = [-crate::sky::ARC, 0.0, crate::sky::ARC].map(|a| body_centre(&camera, a));
         let (left, right) = (camera.px_to_tile([0.0, 0.0]), camera.px_to_tile([1280.0, 720.0]));
-        assert!(dawn[0] > left[0] && dawn[0] < 500.0 && dusk[0] < right[0] && dusk[0] > 500.0, "on screen at either end");
+        assert!(
+            dawn[0] > left[0] && dawn[0] < 500.0 && dusk[0] < right[0] && dusk[0] > 500.0,
+            "on screen at either end"
+        );
         assert_eq!(noon[0], 500.0, "noon is centred");
-        assert!(noon[1] < dawn[1] && noon[1] > left[1], "highest at noon, still on screen");
+        assert!(
+            noon[1] < dawn[1] && noon[1] > left[1],
+            "highest at noon, still on screen"
+        );
         assert_eq!(dawn[1], dusk[1], "the arc is symmetric");
     }
 
@@ -506,7 +623,10 @@ mod tests {
             let row = &strips[i * STRIP..(i + 1) * STRIP];
             let steepest = row.windows(2).map(|w| (w[0][0] - w[1][0]).abs()).fold(0.0, f32::max);
             let seam = (row[STRIP - 1][0] - row[0][0]).abs();
-            assert!(seam <= steepest, "layer {i} jumps {seam} px at the wrap, steepest step is {steepest}");
+            assert!(
+                seam <= steepest,
+                "layer {i} jumps {seam} px at the wrap, steepest step is {steepest}"
+            );
         }
     }
 
@@ -517,10 +637,16 @@ mod tests {
             let tall = layer.height * ART_PX;
             let row = &strips[i * STRIP..(i + 1) * STRIP];
             if matches!(layer.shape, Shape::Clouds { .. }) {
-                assert!(row.iter().all(|s| s[1] >= s[0]), "cloud layers draw from their density map");
+                assert!(
+                    row.iter().all(|s| s[1] >= s[0]),
+                    "cloud layers draw from their density map"
+                );
                 assert_eq!(tall as usize, CLOUD_PX, "a cloud layer is as tall as its map");
             } else {
-                assert!(row.iter().all(|s| s[0] >= 0.0 && s[0] <= tall), "layer {i} leaves its height");
+                assert!(
+                    row.iter().all(|s| s[0] >= 0.0 && s[0] <= tall),
+                    "layer {i} leaves its height"
+                );
                 assert!(row.iter().all(|s| s[1] < -tall), "ground layers fill all the way down");
             }
         }
@@ -528,22 +654,40 @@ mod tests {
 
     #[test]
     fn clouds_vary_in_kind_and_size_and_gather_in_clusters() {
-        let plans: Vec<Vec<Cloud>> = FOREST.layers.iter().enumerate().filter_map(|(i, l)| match l.shape {
-            Shape::Clouds { wisps, .. } => Some(cloud_plan(wisps, FOREST.seed ^ hash(FOREST.seed, i as i64))),
-            _ => None,
-        }).collect();
+        let plans: Vec<Vec<Cloud>> = FOREST
+            .layers
+            .iter()
+            .enumerate()
+            .filter_map(|(i, l)| match l.shape {
+                Shape::Clouds { wisps, .. } => Some(cloud_plan(wisps, FOREST.seed ^ hash(FOREST.seed, i as i64))),
+                _ => None,
+            })
+            .collect();
         let all: Vec<&Cloud> = plans.iter().flatten().collect();
         for kind in [CloudKind::Heap, CloudKind::Bank, CloudKind::Wisp] {
             assert!(all.iter().any(|c| c.kind == kind), "no {kind:?}");
         }
-        let heaps: Vec<f32> = all.iter().filter(|c| c.kind == CloudKind::Heap).map(|c| c.width).collect();
-        let (small, big) = (heaps.iter().cloned().fold(f32::MAX, f32::min), heaps.iter().cloned().fold(0.0, f32::max));
-        assert!(small < 4.0 * ART_PX && big > 10.0 * ART_PX, "heaps should run from a few tiles to many: {small}..{big}");
+        let heaps: Vec<f32> = all
+            .iter()
+            .filter(|c| c.kind == CloudKind::Heap)
+            .map(|c| c.width)
+            .collect();
+        let (small, big) = (
+            heaps.iter().cloned().fold(f32::MAX, f32::min),
+            heaps.iter().cloned().fold(0.0, f32::max),
+        );
+        assert!(
+            small < 4.0 * ART_PX && big > 10.0 * ART_PX,
+            "heaps should run from a few tiles to many: {small}..{big}"
+        );
         // Clustered: the open gaps between clouds vary a lot, some wide.
         let mut xs: Vec<f32> = plans[1].iter().map(|c| c.x.rem_euclid(STRIP as f32)).collect();
         xs.sort_by(f32::total_cmp);
         let gaps: Vec<f32> = xs.windows(2).map(|w| w[1] - w[0]).collect();
-        assert!(gaps.iter().any(|&g| g < 30.0) && gaps.iter().any(|&g| g > 150.0), "clouds should cluster: {gaps:?}");
+        assert!(
+            gaps.iter().any(|&g| g < 30.0) && gaps.iter().any(|&g| g > 150.0),
+            "clouds should cluster: {gaps:?}"
+        );
     }
 
     #[test]
@@ -553,12 +697,23 @@ mod tests {
         for slot in 0..CLOUD_SLOTS {
             let map = &maps[slot * CLOUD_PX * STRIP..(slot + 1) * CLOUD_PX * STRIP];
             let row = |y: usize| &map[y * STRIP..(y + 1) * STRIP];
-            assert!(row(0).iter().chain(row(CLOUD_PX - 1)).all(|&v| v == 0), "vapour reaches the edge of the map");
-            let covered = (0..STRIP).filter(|&x| (0..CLOUD_PX).any(|y| map[y * STRIP + x] > 25)).count();
-            assert!(covered > STRIP / 5 && covered < STRIP * 4 / 5, "slot {slot} covers {covered} of {STRIP} columns");
+            assert!(
+                row(0).iter().chain(row(CLOUD_PX - 1)).all(|&v| v == 0),
+                "vapour reaches the edge of the map"
+            );
+            let covered = (0..STRIP)
+                .filter(|&x| (0..CLOUD_PX).any(|y| map[y * STRIP + x] > 25))
+                .count();
+            assert!(
+                covered > STRIP / 5 && covered < STRIP * 4 / 5,
+                "slot {slot} covers {covered} of {STRIP} columns"
+            );
             // Thin vapour exists, not just solid cores: the clouds are see-through at their edges.
             let thin = map.iter().filter(|&&v| v > 0 && v < 100).count();
-            assert!(thin > map.iter().filter(|&&v| v >= 200).count() / 4, "slot {slot} has hardly any thin vapour");
+            assert!(
+                thin > map.iter().filter(|&&v| v >= 200).count() / 4,
+                "slot {slot} has hardly any thin vapour"
+            );
             for y in 0..CLOUD_PX {
                 let (a, b) = (row(y)[STRIP - 1] as i32, row(y)[0] as i32);
                 assert!((a - b).abs() < 60, "the map jumps at the wrap on row {y}: {a} vs {b}");
@@ -568,9 +723,16 @@ mod tests {
 
     #[test]
     fn far_layers_fade_toward_the_horizon_and_scroll_slower() {
-        let ground: Vec<&Layer> = FOREST.layers.iter().filter(|l| !matches!(l.shape, Shape::Clouds { .. })).collect();
+        let ground: Vec<&Layer> = FOREST
+            .layers
+            .iter()
+            .filter(|l| !matches!(l.shape, Shape::Clouds { .. }))
+            .collect();
         for pair in ground.windows(2) {
-            assert!(pair[0].haze > pair[1].haze, "a further layer should fade further toward the horizon");
+            assert!(
+                pair[0].haze > pair[1].haze,
+                "a further layer should fade further toward the horizon"
+            );
         }
         for pair in FOREST.layers.windows(2) {
             assert!(pair[0].factor < pair[1].factor, "layers are listed back to front");

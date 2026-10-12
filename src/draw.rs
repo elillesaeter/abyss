@@ -16,7 +16,10 @@ const TILE_PX: f32 = CELL as f32;
 
 /// A sprite's width and height in tiles, drawn at one art pixel per world pixel.
 fn tiles(icon: Icon) -> [f32; 2] {
-    [icon.cells[0] as f32 * ICON as f32 / TILE_PX, icon.cells[1] as f32 * ICON as f32 / TILE_PX]
+    [
+        icon.cells[0] as f32 * ICON as f32 / TILE_PX,
+        icon.cells[1] as f32 * ICON as f32 / TILE_PX,
+    ]
 }
 
 /// A sprite turned by `angle`, centred on `centre`.
@@ -37,7 +40,12 @@ pub fn mobs(entities: &Entities, next_id: &mut u32, out: &mut Vec<Instance>) {
         *next_id += 1;
         let kind = mob::kind(kind.0);
         let Look::Cube(size) = kind.look else {
-            out.push(autotile::tinted_box(sprite.corner(body.pos), sprite.size(), sprite.tint, *next_id));
+            out.push(autotile::tinted_box(
+                sprite.corner(body.pos),
+                sprite.size(),
+                sprite.tint,
+                *next_id,
+            ));
             continue;
         };
         let (icon, width_px) = icons::CUBES[size];
@@ -52,7 +60,15 @@ pub fn mobs(entities: &Entities, next_id: &mut u32, out: &mut Vec<Instance>) {
         }
         let [w, h] = tiles(icon);
         let (w, h) = (w * sx, h * sy);
-        out.push(autotile::icon(icon, [body.pos[0] - w * 0.5, feet - h], [w, 0.0], [0.0, h], kind.color, GLASS, *next_id));
+        out.push(autotile::icon(
+            icon,
+            [body.pos[0] - w * 0.5, feet - h],
+            [w, 0.0],
+            [0.0, h],
+            kind.color,
+            GLASS,
+            *next_id,
+        ));
     }
 }
 
@@ -68,14 +84,23 @@ pub fn sword(player: &Player, id: u32) -> Option<Instance> {
     let ay = [-dir[0] * h, -dir[1] * h];
     let ax = [-dir[1] * w * mirror, dir[0] * w * mirror];
     let g = [weapon.grip[0] / (w * TILE_PX), weapon.grip[1] / (h * TILE_PX)];
-    let pos = [grip[0] - ax[0] * g[0] - ay[0] * g[1], grip[1] - ax[1] * g[0] - ay[1] * g[1]];
+    let pos = [
+        grip[0] - ax[0] * g[0] - ay[0] * g[1],
+        grip[1] - ax[1] * g[0] - ay[1] * g[1],
+    ];
     Some(autotile::icon(weapon.sprite, pos, ax, ay, [255; 4], 0, id | NO_OUTLINE))
 }
 
 pub fn drops(entities: &Entities, next_id: &mut u32, out: &mut Vec<Instance>) {
     for (body, drop) in entities.query::<(&Body, &Drop)>().iter() {
         *next_id += 1;
-        out.push(turned(icons::item_icon(drop.item), body.pos, 0.0, [255; 4], *next_id | NO_OUTLINE));
+        out.push(turned(
+            icons::item_icon(drop.item),
+            body.pos,
+            0.0,
+            [255; 4],
+            *next_id | NO_OUTLINE,
+        ));
     }
 }
 
@@ -88,7 +113,15 @@ fn number(value: u32, centre: [f32; 2], scale: f32, tint: [u8; 4], flags: u32, i
     let cell = ICON as f32 * px;
     for (i, d) in text.bytes().enumerate() {
         let pos = [left + advance * i as f32 - px, centre[1] - 4.5 * px];
-        out.push(autotile::icon(icons::digit((d - b'0') as u32), pos, [cell, 0.0], [0.0, cell], tint, flags | UNLIT, id));
+        out.push(autotile::icon(
+            icons::digit((d - b'0') as u32),
+            pos,
+            [cell, 0.0],
+            [0.0, cell],
+            tint,
+            flags | UNLIT,
+            id,
+        ));
     }
 }
 
@@ -99,7 +132,15 @@ pub fn popups(popups: &[Popup], next_id: &mut u32, out: &mut Vec<Instance>) {
         let fade = (1.0 - p.age / POPUP_TIME).clamp(0.0, 1.0);
         let rgb = if p.hurt_player { [255, 90, 90] } else { [255, 255, 255] };
         let tint = [rgb[0], rgb[1], rgb[2], (255.0 * fade.sqrt()) as u8];
-        number(p.value.max(0) as u32, p.pos, 2.0, tint, GLASS, *next_id | NO_OUTLINE, out);
+        number(
+            p.value.max(0) as u32,
+            p.pos,
+            2.0,
+            tint,
+            GLASS,
+            *next_id | NO_OUTLINE,
+            out,
+        );
     }
 }
 
@@ -132,17 +173,40 @@ pub fn hud(player: &Player, camera: &Camera, viewport: (u32, u32), next_id: &mut
     let slot_step = (icons::SLOT_PX as f32 + SLOT_GAP) * s;
     for (i, slot) in player.inventory.slots.iter().enumerate().take(HOTBAR) {
         let (x, y) = (MARGIN + i as f32 * slot_step, MARGIN);
-        let tint = if i == player.inventory.selected { SELECTED } else { UNSELECTED };
+        let tint = if i == player.inventory.selected {
+            SELECTED
+        } else {
+            UNSELECTED
+        };
         let (ax, ay) = quad(icons::SLOT);
         out.push(autotile::icon(icons::SLOT, at(x, y), ax, ay, tint, UNLIT, id));
         let Some(stack) = slot else { continue };
         let icon = icons::item_icon(stack.item);
         let (ax, ay) = quad(icon);
-        out.push(autotile::icon(icon, at(x + 4.0 * s, y + 4.0 * s), ax, ay, [255; 4], UNLIT, id));
+        out.push(autotile::icon(
+            icon,
+            at(x + 4.0 * s, y + 4.0 * s),
+            ax,
+            ay,
+            [255; 4],
+            UNLIT,
+            id,
+        ));
         if stack.count > 1 {
             let digits = stack.count.to_string().len() as f32;
-            let centre = at(x + (icons::SLOT_PX as f32 - 2.0 - digits * 3.0) * s, y + (icons::SLOT_PX as f32 - 5.0) * s);
-            number(stack.count as u32, centre, s * camera.pixels_per_tile().recip() * TILE_PX, [255; 4], 0, id, out);
+            let centre = at(
+                x + (icons::SLOT_PX as f32 - 2.0 - digits * 3.0) * s,
+                y + (icons::SLOT_PX as f32 - 5.0) * s,
+            );
+            number(
+                stack.count as u32,
+                centre,
+                s * camera.pixels_per_tile().recip() * TILE_PX,
+                [255; 4],
+                0,
+                id,
+                out,
+            );
         }
     }
 
@@ -153,9 +217,22 @@ pub fn hud(player: &Player, camera: &Camera, viewport: (u32, u32), next_id: &mut
         // How full this heart is, from empty to whole.
         let fill = ((player.health - k * player::HEART) as f32 / player::HEART as f32).clamp(0.0, 1.0);
         let mix = |e: u8, f: u8| (e as f32 + (f as f32 - e as f32) * fill) as u8;
-        let tint = [mix(HEART_EMPTY[0], HEART_FULL[0]), mix(HEART_EMPTY[1], HEART_FULL[1]), mix(HEART_EMPTY[2], HEART_FULL[2]), 255];
+        let tint = [
+            mix(HEART_EMPTY[0], HEART_FULL[0]),
+            mix(HEART_EMPTY[1], HEART_FULL[1]),
+            mix(HEART_EMPTY[2], HEART_FULL[2]),
+            255,
+        ];
         let (ax, ay) = quad(icons::HEART);
-        out.push(autotile::icon(icons::HEART, at(right + k as f32 * heart_step, MARGIN), ax, ay, tint, UNLIT, id));
+        out.push(autotile::icon(
+            icons::HEART,
+            at(right + k as f32 * heart_step, MARGIN),
+            ax,
+            ay,
+            tint,
+            UNLIT,
+            id,
+        ));
     }
 }
 
@@ -176,11 +253,20 @@ mod tests {
         assert_eq!(out.len(), 3, "two bones, then the cube");
         let cube = out[2];
         assert_eq!(cube.edges & GLASS, GLASS);
-        assert!((cube.pos[1] + cube.axis_y[1] - (body.pos[1] + body.half[1])).abs() < 1e-4, "base on the ground");
+        assert!(
+            (cube.pos[1] + cube.axis_y[1] - (body.pos[1] + body.half[1])).abs() < 1e-4,
+            "base on the ground"
+        );
         assert!(cube.axis_y[1] < cube.axis_x[0], "squashed wider than tall");
         for bone in &out[..2] {
-            let centre = [bone.pos[0] + (bone.axis_x[0] + bone.axis_y[0]) * 0.5, bone.pos[1] + (bone.axis_x[1] + bone.axis_y[1]) * 0.5];
-            assert!((centre[0] - body.pos[0]).abs() < body.half[0] && (centre[1] - body.pos[1]).abs() < body.half[1], "a bone outside its cube");
+            let centre = [
+                bone.pos[0] + (bone.axis_x[0] + bone.axis_y[0]) * 0.5,
+                bone.pos[1] + (bone.axis_x[1] + bone.axis_y[1]) * 0.5,
+            ];
+            assert!(
+                (centre[0] - body.pos[0]).abs() < body.half[0] && (centre[1] - body.pos[1]).abs() < body.half[1],
+                "a bone outside its cube"
+            );
             assert_eq!(bone.id, cube.id);
         }
     }
@@ -189,7 +275,10 @@ mod tests {
     fn numbers_lay_out_their_digits_side_by_side() {
         let mut out = Vec::new();
         number(120, [0.0, 0.0], 1.0, [255; 4], 0, 1, &mut out);
-        assert_eq!(out.iter().map(|i| i.mat).collect::<Vec<_>>(), vec![icons::DIGITS + 1, icons::DIGITS + 2, icons::DIGITS]);
+        assert_eq!(
+            out.iter().map(|i| i.mat).collect::<Vec<_>>(),
+            vec![icons::DIGITS + 1, icons::DIGITS + 2, icons::DIGITS]
+        );
         assert!(out.windows(2).all(|w| w[1].pos[0] > w[0].pos[0]));
         assert!(out.iter().all(|i| i.edges & UNLIT != 0));
     }

@@ -123,18 +123,12 @@ impl LightMap {
     }
 
     fn resize(&mut self, world: &World, view: TileRect) {
-        self.origin = [
-            (view.x0 - MARGIN).max(0),
-            (view.y0 - MARGIN).max(0),
-        ];
+        self.origin = [(view.x0 - MARGIN).max(0), (view.y0 - MARGIN).max(0)];
         let end = [
             (view.x1 + MARGIN).min(world.width()),
             (view.y1 + MARGIN).min(world.height()),
         ];
-        self.size = [
-            (end[0] - self.origin[0]).max(1),
-            (end[1] - self.origin[1]).max(1),
-        ];
+        self.size = [(end[0] - self.origin[0]).max(1), (end[1] - self.origin[1]).max(1)];
         let cells = (self.size[0] * self.size[1]) as usize;
         self.light.clear();
         self.light.resize(cells, [0.0; 3]);
@@ -173,7 +167,11 @@ impl LightMap {
             let prev = a - step;
             let sideways = (shift(m) - shift(m - 1)) * slope.signum() as i32;
             for n in 0..minor {
-                let (pi, pj) = if steep { (n - sideways, prev) } else { (prev, n - sideways) };
+                let (pi, pj) = if steep {
+                    (n - sideways, prev)
+                } else {
+                    (prev, n - sideways)
+                };
                 let incoming = if pi < 0 || pj < 0 || pi >= w || pj >= h {
                     open_sky(world, base[0] + pi, base[1] + pj)
                 } else {
@@ -183,7 +181,11 @@ impl LightMap {
                 let (sx, sy) = (base[0] + i, base[1] + j);
                 let solid = is_solid(world.get(sx.div_euclid(SUN_SUB), sy.div_euclid(SUN_SUB)));
                 let leaves = world.foliage(sx, sy) as f32 / 255.0;
-                let after = if solid { 0.0 } else { incoming * (1.0 - FOLIAGE_OPACITY * leaves) };
+                let after = if solid {
+                    0.0
+                } else {
+                    incoming * (1.0 - FOLIAGE_OPACITY * leaves)
+                };
                 let cell = (j * w + i) as usize;
                 self.through[cell] = after;
                 self.sun[cell] = if solid { incoming } else { after };
@@ -198,7 +200,11 @@ impl LightMap {
             for i in 0..self.size[0] {
                 let (x, y) = (self.origin[0] + i, self.origin[1] + j);
                 let id = world.get(x, y);
-                let bounce = if is_solid(id) { 0.0 } else { self.direct_at(x, y) * BOUNCE };
+                let bounce = if is_solid(id) {
+                    0.0
+                } else {
+                    self.direct_at(x, y) * BOUNCE
+                };
                 let cell = &mut self.light[(j * self.size[0] + i) as usize];
                 if !is_solid(id) && y < world.sky_level(x) {
                     *cell = lighting.ambient;
@@ -314,7 +320,12 @@ mod tests {
     }
 
     fn view() -> TileRect {
-        TileRect { x0: 20, y0: 10, x1: 100, y1: 110 }
+        TileRect {
+            x0: 20,
+            y0: 10,
+            x1: 100,
+            y1: 110,
+        }
     }
 
     fn brightness(light: [f32; 3]) -> f32 {
@@ -418,7 +429,10 @@ mod tests {
         map.update(&world, view(), &day());
 
         let near = map.at(55, 83);
-        assert!(brightness(near) > 0.3, "the tile beside a torch should be lit, got {near:?}");
+        assert!(
+            brightness(near) > 0.3,
+            "the tile beside a torch should be lit, got {near:?}"
+        );
         assert!(near[0] > near[2], "torchlight should be warm, got {near:?}");
         assert!(
             lit(&map, 55, 83) > lit(&map, 59, 83),
@@ -435,7 +449,12 @@ mod tests {
             }
         }
         world.snapshot_surface();
-        let region = TileRect { x0: 10, y0: 0, x1: 240, y1: 200 };
+        let region = TileRect {
+            x0: 10,
+            y0: 0,
+            x1: 240,
+            y1: 200,
+        };
 
         let mut map = LightMap::default();
         map.update(&world, region, &day());
@@ -449,7 +468,10 @@ mod tests {
         }
         map.update(&world, region, &day());
         let floor = lit(&map, 120, 46);
-        assert!(floor > 0.4, "the floor exposed by digging should be daylit, got {floor}");
+        assert!(
+            floor > 0.4,
+            "the floor exposed by digging should be daylit, got {floor}"
+        );
     }
 
     #[test]
@@ -462,12 +484,20 @@ mod tests {
             }
         }
         world.snapshot_surface();
-        let region = TileRect { x0: 10, y0: 0, x1: 240, y1: 200 };
+        let region = TileRect {
+            x0: 10,
+            y0: 0,
+            x1: 240,
+            y1: 200,
+        };
 
         let mut map = LightMap::default();
         map.update(&world, region, &day());
         let before = lit(&map, 120, surface(120));
-        assert!(before > 0.3, "a sloped surface should be lit to begin with, got {before}");
+        assert!(
+            before > 0.3,
+            "a sloped surface should be lit to begin with, got {before}"
+        );
 
         for x in 100..140 {
             world.set(x, surface(x), AIR);
@@ -490,7 +520,16 @@ mod tests {
         }
         world.set(55, 85, TORCH);
         let mut map = LightMap::default();
-        map.update(&world, TileRect { x0: 20, y0: 60, x1: 90, y1: 110 }, &day());
+        map.update(
+            &world,
+            TileRect {
+                x0: 20,
+                y0: 60,
+                x1: 90,
+                y1: 110,
+            },
+            &day(),
+        );
         let at = |dx: i32, dy: i32| lit(&map, 55 + dx, 85 + dy);
 
         // 7.00 and 7.07 tiles away: near-equal distances, so near-equal light.
@@ -524,7 +563,16 @@ mod tests {
             }
         }
         let mut map = LightMap::default();
-        map.update(&world, TileRect { x0: 20, y0: 10, x1: 110, y1: 110 }, &day());
+        map.update(
+            &world,
+            TileRect {
+                x0: 20,
+                y0: 10,
+                x1: 110,
+                y1: 110,
+            },
+            &day(),
+        );
 
         let open_sky = lit(&map, 61, 38);
         for depth in 0..3 {
@@ -583,7 +631,16 @@ mod tests {
         world.set(50, 71, TORCH);
 
         let mut map = LightMap::default();
-        map.update(&world, TileRect { x0: 20, y0: 60, x1: 90, y1: 110 }, &day());
+        map.update(
+            &world,
+            TileRect {
+                x0: 20,
+                y0: 60,
+                x1: 90,
+                y1: 110,
+            },
+            &day(),
+        );
         let far_end = lit(&map, 53, 82);
         assert!(
             far_end > 0.01,
@@ -615,7 +672,16 @@ mod tests {
         world.set(bottom[0], bottom[1], TORCH);
 
         let mut map = LightMap::default();
-        map.update(&world, TileRect { x0: 20, y0: 60, x1: 90, y1: 110 }, &day());
+        map.update(
+            &world,
+            TileRect {
+                x0: 20,
+                y0: 60,
+                x1: 90,
+                y1: 110,
+            },
+            &day(),
+        );
         let top = lit(&map, x, y);
         assert!(top > 0.005, "light should climb the staircase, got {top}");
     }
@@ -639,7 +705,16 @@ mod tests {
     fn the_region_covers_the_view_with_margin_and_is_clamped_to_the_world() {
         let world = world();
         let mut map = LightMap::default();
-        map.update(&world, TileRect { x0: 0, y0: 0, x1: 40, y1: 40 }, &day());
+        map.update(
+            &world,
+            TileRect {
+                x0: 0,
+                y0: 0,
+                x1: 40,
+                y1: 40,
+            },
+            &day(),
+        );
         assert_eq!(map.origin(), [0, 0], "clamped at the world edge");
         assert_eq!(map.size(), [40 + MARGIN, 40 + MARGIN]);
         assert_eq!(map.texels().len(), (map.size()[0] * map.size()[1] * 4) as usize);
@@ -660,7 +735,10 @@ mod tests {
         assert!(map.direct_at(76, 31) < 0.01, "the shadow is long at a low sun");
         assert!(map.direct_at(90, 31) > 0.9, "and it ends");
         let wall = map.direct_at(60, 25);
-        assert!((0.4..=0.6).contains(&wall), "the wall is lit on its sunward half only, got {wall}");
+        assert!(
+            (0.4..=0.6).contains(&wall),
+            "the wall is lit on its sunward half only, got {wall}"
+        );
     }
 
     #[test]
@@ -676,9 +754,15 @@ mod tests {
         let mut map = LightMap::default();
         map.update(&world, view(), &Sky::at(0, 12.0).lighting());
         let under = map.direct_at(53, 28);
-        assert!(under > 0.01 && under < 0.3, "light under the canopy is dappled, got {under}");
+        assert!(
+            under > 0.01 && under < 0.3,
+            "light under the canopy is dappled, got {under}"
+        );
         assert!(map.direct_at(40, 28) > 0.95, "beside it is full sun");
-        assert!(map.direct_at(53, 28) < map.direct_at(53, 21), "it dims through the leaves");
+        assert!(
+            map.direct_at(53, 28) < map.direct_at(53, 21),
+            "it dims through the leaves"
+        );
     }
 
     #[test]
@@ -692,7 +776,10 @@ mod tests {
         world.snapshot_surface();
         let mut map = LightMap::default();
         map.update(&world, view(), &Sky::at(0, 12.0).lighting());
-        assert!(map.direct_at(52, 30) < 0.01, "at noon the overhang shades what is under it");
+        assert!(
+            map.direct_at(52, 30) < 0.01,
+            "at noon the overhang shades what is under it"
+        );
         map.update(&world, view(), &Sky::at(0, 6.0).lighting());
         assert!(map.direct_at(52, 30) > 0.9, "the morning sun slants in underneath");
     }
@@ -702,7 +789,10 @@ mod tests {
         let world = world();
         let mut map = LightMap::default();
         map.update(&world, view(), &day());
-        assert!(map.direct_at(60, 32) > 0.4, "the top tile of the ground catches the sun");
+        assert!(
+            map.direct_at(60, 32) > 0.4,
+            "the top tile of the ground catches the sun"
+        );
         assert_eq!(map.direct_at(60, 34), 0.0, "rock below it gets none");
     }
 }

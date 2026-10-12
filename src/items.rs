@@ -61,8 +61,13 @@ impl Weapon {
     }
 }
 
-pub const STARTER_SWORD: Weapon =
-    Weapon { sprite: icons::SWORD, grip: icons::SWORD_GRIP, damage: 20, use_time: 0.4, knockback: 4.5 };
+pub const STARTER_SWORD: Weapon = Weapon {
+    sprite: icons::SWORD,
+    grip: icons::SWORD_GRIP,
+    damage: 20,
+    use_time: 0.4,
+    knockback: 4.5,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stack {
@@ -81,7 +86,10 @@ pub struct Inventory {
 
 impl Inventory {
     pub fn starter() -> Inventory {
-        let mut inv = Inventory { slots: [None; HOTBAR], selected: 0 };
+        let mut inv = Inventory {
+            slots: [None; HOTBAR],
+            selected: 0,
+        };
         inv.add(Item::Sword, 1);
         inv.add(Item::Dirt, 99);
         inv.add(Item::Stone, 99);
@@ -147,7 +155,10 @@ mod tests {
 
     #[test]
     fn a_full_inventory_hands_back_what_does_not_fit() {
-        let mut inv = Inventory { slots: [None; HOTBAR], selected: 0 };
+        let mut inv = Inventory {
+            slots: [None; HOTBAR],
+            selected: 0,
+        };
         for _ in 0..HOTBAR {
             inv.add(Item::Sword, 1);
         }

@@ -178,7 +178,9 @@ impl ApplicationHandler for App {
         self.camera.resize(size.width, size.height);
         match self.zoom_override {
             Some(step) => self.camera.set_zoom(step),
-            None => self.camera.fit_view(camera::DEFAULT_VIEW_TILES.0, camera::DEFAULT_VIEW_TILES.1),
+            None => self
+                .camera
+                .fit_view(camera::DEFAULT_VIEW_TILES.0, camera::DEFAULT_VIEW_TILES.1),
         }
         let (tw, th) = self.camera.view_tiles();
         println!(
@@ -199,8 +201,7 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 self.camera.resize(size.width, size.height);
-                self.camera
-                    .clamp_to_world(self.world.width(), self.world.height());
+                self.camera.clamp_to_world(self.world.width(), self.world.height());
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize(size.width, size.height);
                 }
@@ -208,7 +209,11 @@ impl ApplicationHandler for App {
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = [position.x as f32, position.y as f32];
             }
-            WindowEvent::MouseInput { button: MouseButton::Left, state, .. } => {
+            WindowEvent::MouseInput {
+                button: MouseButton::Left,
+                state,
+                ..
+            } => {
                 // Used each frame while held; see RedrawRequested.
                 self.using_held = state == ElementState::Pressed;
             }
@@ -222,7 +227,11 @@ impl ApplicationHandler for App {
                     self.player.inventory.select(selected - steps.signum() as i32);
                 }
             }
-            WindowEvent::MouseInput { button, state: ElementState::Pressed, .. } if !self.player.is_dead() => {
+            WindowEvent::MouseInput {
+                button,
+                state: ElementState::Pressed,
+                ..
+            } if !self.player.is_dead() => {
                 let tile = self.camera.px_to_tile(self.cursor);
                 let target = [tile[0].floor() as i32, tile[1].floor() as i32];
                 // Every swing shows, landed or not, turned toward the cursor.
@@ -236,27 +245,29 @@ impl ApplicationHandler for App {
                         if self.player.mine(&mut self.world, target) {
                             trees::after_cut(&mut self.world, target[0], target[1], self.player.pos[0]);
                             // Mining is the disturbance mobs react to.
-                            self.noise
-                                .record([target[0] as f32 + 0.5, target[1] as f32 + 0.5]);
+                            self.noise.record([target[0] as f32 + 0.5, target[1] as f32 + 0.5]);
                         }
                     }
                     _ => {}
                 }
             }
             WindowEvent::KeyboardInput {
-                event: KeyEvent { physical_key: PhysicalKey::Code(code), state, .. },
+                event:
+                    KeyEvent {
+                        physical_key: PhysicalKey::Code(code),
+                        state,
+                        ..
+                    },
                 ..
             } => match (code, state) {
                 (KeyCode::Escape, ElementState::Pressed) => event_loop.exit(),
                 (KeyCode::Minus, ElementState::Pressed) => {
                     self.camera.zoom_out();
-                    self.camera
-                        .clamp_to_world(self.world.width(), self.world.height());
+                    self.camera.clamp_to_world(self.world.width(), self.world.height());
                 }
                 (KeyCode::Equal, ElementState::Pressed) => {
                     self.camera.zoom_in();
-                    self.camera
-                        .clamp_to_world(self.world.width(), self.world.height());
+                    self.camera.clamp_to_world(self.world.width(), self.world.height());
                 }
                 (code, ElementState::Pressed) => {
                     if let Some(slot) = hotbar_key(code) {
@@ -275,16 +286,18 @@ impl ApplicationHandler for App {
                 let intent = self.intent();
                 self.noise.advance(dt);
                 trees::update(&mut self.world, dt);
-                let speed = if self.held.contains(&KeyCode::KeyT) { TIME_WARP } else { 1.0 };
+                let speed = if self.held.contains(&KeyCode::KeyT) {
+                    TIME_WARP
+                } else {
+                    1.0
+                };
                 self.world.sky.advance(dt * speed);
                 if self.using_held {
                     let at = self.camera.px_to_tile(self.cursor);
                     self.player.use_held(&mut self.world, at);
                 }
                 self.player.update(&self.world, intent, dt);
-                let view = self
-                    .camera
-                    .visible_tiles(self.world.width(), self.world.height());
+                let view = self.camera.visible_tiles(self.world.width(), self.world.height());
                 self.spawner
                     .tick(&mut self.entities, &self.world, view, self.player.pos, dt);
                 mob::update(
@@ -296,16 +309,10 @@ impl ApplicationHandler for App {
                     dt,
                 );
                 combat::update(&self.world, &mut self.player, &mut self.entities, &mut self.popups, dt);
-                self.camera.follow_smoothed(
-                    self.player.visual_pos(),
-                    dt,
-                    self.world.width(),
-                    self.world.height(),
-                );
+                self.camera
+                    .follow_smoothed(self.player.visual_pos(), dt, self.world.width(), self.world.height());
                 // Light last: it is computed for wherever the camera ended up.
-                let lit = self
-                    .camera
-                    .visible_tiles(self.world.width(), self.world.height());
+                let lit = self.camera.visible_tiles(self.world.width(), self.world.height());
                 self.light.update(&self.world, lit, &self.world.sky.lighting());
                 if let Some(renderer) = &mut self.renderer {
                     renderer.render(
@@ -356,23 +363,18 @@ impl ApplicationHandler for App {
 /// Number keys 1-9 then 0 pick hotbar slots left to right.
 fn hotbar_key(code: KeyCode) -> Option<i32> {
     use KeyCode::*;
-    [Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9, Digit0]
-        .iter()
-        .position(|&k| k == code)
-        .map(|i| i as i32)
+    [
+        Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9, Digit0,
+    ]
+    .iter()
+    .position(|&k| k == code)
+    .map(|i| i as i32)
 }
 
 /// Renders one frame without a window and writes it to a PNG. Needed because a
 /// window launched from a terminal may never become visible, which makes the
 /// windowed path unverifiable, and useful for eyeballing changes.
-fn screenshot(
-    mut world: World,
-    seed: u64,
-    path: &str,
-    width: u32,
-    height: u32,
-    zoom: Option<usize>,
-) {
+fn screenshot(mut world: World, seed: u64, path: &str, width: u32, height: u32, zoom: Option<usize>) {
     let spawn_x = world.width() / 2;
     let spawn_y = worldgen::surface_y(world.height(), seed, spawn_x) as f32 - 4.0;
     let mut player = Player::new([spawn_x as f32 + 0.5, spawn_y]);
@@ -406,7 +408,12 @@ fn screenshot(
     for _ in 0..8 {
         player.update(&world, Intent::default(), 1.0 / 60.0);
     }
-    let popups = [combat::Popup { pos: [player.pos[0] + 3.0, player.pos[1] - 2.5], value: 20, age: 0.2, hurt_player: false }];
+    let popups = [combat::Popup {
+        pos: [player.pos[0] + 3.0, player.pos[1] - 2.5],
+        value: 20,
+        age: 0.2,
+        hurt_player: false,
+    }];
 
     // A tunnel into the hillside with a torch in it, so a capture shows what the
     // lighting actually does: daylight outside, darkness inside, warm light around
@@ -483,7 +490,11 @@ fn dump(world: &World, seed: u64, x0: i32, width: i32, height: i32) {
         .unwrap_or(0);
     let y0 = (highest - 6).max(0);
 
-    println!("\nx {x0}..{}, y {y0}..{}  (' ' air, '\"' grass, '.' dirt, '#' stone, '|' trunk)\n", x0 + width, y0 + height);
+    println!(
+        "\nx {x0}..{}, y {y0}..{}  (' ' air, '\"' grass, '.' dirt, '#' stone, '|' trunk)\n",
+        x0 + width,
+        y0 + height
+    );
     for y in y0..(y0 + height).min(world.height()) {
         let row: String = (x0..(x0 + width).min(world.width()))
             .map(|x| match world.get(x, y) {

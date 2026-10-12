@@ -81,10 +81,7 @@ pub fn grounded(world: &World, pos: [f32; 2], half: [f32; 2]) -> bool {
 pub fn supported(world: &World, pos: [f32; 2], half: [f32; 2]) -> bool {
     let feet = pos[1] + half[1];
     let (x0, x1) = covered(pos[0], half[0]);
-    let (y0, y1) = (
-        (feet + 2.0 * EPS).floor() as i32,
-        (feet + STEP_HEIGHT).floor() as i32,
-    );
+    let (y0, y1) = ((feet + 2.0 * EPS).floor() as i32, (feet + STEP_HEIGHT).floor() as i32);
     (y0..=y1).any(|y| (x0..=x1).any(|x| solid_at(world, x, y)))
 }
 
@@ -211,8 +208,16 @@ mod tests {
             vel[0] = 9.0;
             move_box(&mut pos, &mut vel, HALF, &world, DT, true);
         }
-        assert!(pos[0] + HALF[0] <= 45.0, "penetrated the wall: right edge {}", pos[0] + HALF[0]);
-        assert!(pos[0] + HALF[0] > 44.9, "stopped short of the wall: right edge {}", pos[0] + HALF[0]);
+        assert!(
+            pos[0] + HALF[0] <= 45.0,
+            "penetrated the wall: right edge {}",
+            pos[0] + HALF[0]
+        );
+        assert!(
+            pos[0] + HALF[0] > 44.9,
+            "stopped short of the wall: right edge {}",
+            pos[0] + HALF[0]
+        );
     }
 
     #[test]
@@ -253,7 +258,11 @@ mod tests {
             assert!(!contacts.stepped_up, "must not step while refused");
         }
         assert!(offered, "being blocked by a one-tile step should offer the step");
-        assert!(pos[0] + HALF[0] <= 45.01, "stepped anyway: right edge {}", pos[0] + HALF[0]);
+        assert!(
+            pos[0] + HALF[0] <= 45.01,
+            "stepped anyway: right edge {}",
+            pos[0] + HALF[0]
+        );
     }
 
     #[test]
@@ -308,7 +317,7 @@ mod tests {
                 vel[0] = 9.0;
                 vel[1] = (vel[1] + 45.0 * DT).min(38.0);
                 let on_ground = supported(&world, pos, HALF);
-            move_box(&mut pos, &mut vel, HALF, &world, DT, on_ground);
+                move_box(&mut pos, &mut vel, HALF, &world, DT, on_ground);
             }
             if should_climb {
                 assert!(pos[0] > 46.0, "failed to step up one tile: x {}", pos[0]);
@@ -344,7 +353,11 @@ mod tests {
                 move_box(&mut pos, &mut vel, HALF, &world, DT, on_ground);
             }
             let climbed = (pos[1] - resting_on(GROUND - 1)).abs() < 0.01;
-            assert!(climbed, "moving {direction} ended at y {} instead of on the step", pos[1]);
+            assert!(
+                climbed,
+                "moving {direction} ended at y {} instead of on the step",
+                pos[1]
+            );
         }
     }
 
@@ -368,7 +381,11 @@ mod tests {
             let on_ground = supported(&world, pos, HALF);
             move_box(&mut pos, &mut vel, HALF, &world, DT, on_ground);
         }
-        assert!(pos[0] + HALF[0] <= 45.01, "squeezed into a gap it cannot fit: x {}", pos[0]);
+        assert!(
+            pos[0] + HALF[0] <= 45.01,
+            "squeezed into a gap it cannot fit: x {}",
+            pos[0]
+        );
         assert!(
             (pos[1] - resting_on(GROUND)).abs() < 0.01,
             "left hovering mid-climb at y {} instead of settling",
@@ -434,11 +451,7 @@ mod tests {
         let mut pos = [39.0, 20.0];
         let mut vel = [1200.0, 0.0]; // 20 tiles in one frame
         move_box(&mut pos, &mut vel, HALF, &world, DT, false);
-        assert!(
-            pos[0] + HALF[0] <= 45.01,
-            "tunnelled through the wall to x {}",
-            pos[0]
-        );
+        assert!(pos[0] + HALF[0] <= 45.01, "tunnelled through the wall to x {}", pos[0]);
         assert_eq!(vel[0], 0.0, "velocity should be cancelled by the contact");
     }
 

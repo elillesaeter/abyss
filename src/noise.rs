@@ -37,10 +37,7 @@ impl NoiseLog {
         self.events
             .iter()
             .rev()
-            .find(|n| {
-                self.now - n.at <= max_age
-                    && (n.pos[0] - listener[0]).hypot(n.pos[1] - listener[1]) <= radius
-            })
+            .find(|n| self.now - n.at <= max_age && (n.pos[0] - listener[0]).hypot(n.pos[1] - listener[1]) <= radius)
             .copied()
     }
 }

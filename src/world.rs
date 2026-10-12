@@ -279,10 +279,7 @@ impl World {
     fn index(&self, x: i32, y: i32) -> (usize, usize) {
         let (cx, cy) = (x / CHUNK_SIZE, y / CHUNK_SIZE);
         let (lx, ly) = (x % CHUNK_SIZE, y % CHUNK_SIZE);
-        (
-            (cy * self.width_chunks + cx) as usize,
-            (ly * CHUNK_SIZE + lx) as usize,
-        )
+        ((cy * self.width_chunks + cx) as usize, (ly * CHUNK_SIZE + lx) as usize)
     }
 }
 
@@ -414,7 +411,11 @@ mod tests {
         let (own, neighbour) = (w.chunk_revision(1, 1), w.chunk_revision(0, 0));
         w.set_decor(CHUNK_SIZE, CHUNK_SIZE, DECOR_GRASS);
         assert!(w.chunk_revision(1, 1) > own, "the owning chunk must rebuild");
-        assert_eq!(w.chunk_revision(0, 0), neighbour, "decoration does not cross chunk borders");
+        assert_eq!(
+            w.chunk_revision(0, 0),
+            neighbour,
+            "decoration does not cross chunk borders"
+        );
     }
 
     #[test]

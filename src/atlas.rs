@@ -89,9 +89,27 @@ const THIN: f32 = 2.0;
 
 /// Shades darkest to lightest. Dark ends lean cool and violet, light ends warm:
 /// muted and earthy, a little warm, a little threatening.
-pub const DIRT_RAMP: [[u8; 3]; 5] = [[52, 34, 36], [84, 55, 45], [114, 79, 57], [143, 105, 73], [174, 136, 95]];
-pub const STONE_RAMP: [[u8; 3]; 5] = [[40, 37, 49], [64, 59, 71], [92, 85, 91], [121, 112, 109], [152, 141, 127]];
-pub const GRASS_RAMP: [[u8; 3]; 5] = [[48, 64, 40], [70, 94, 46], [96, 122, 54], [126, 148, 64], [160, 172, 84]];
+pub const DIRT_RAMP: [[u8; 3]; 5] = [
+    [52, 34, 36],
+    [84, 55, 45],
+    [114, 79, 57],
+    [143, 105, 73],
+    [174, 136, 95],
+];
+pub const STONE_RAMP: [[u8; 3]; 5] = [
+    [40, 37, 49],
+    [64, 59, 71],
+    [92, 85, 91],
+    [121, 112, 109],
+    [152, 141, 127],
+];
+pub const GRASS_RAMP: [[u8; 3]; 5] = [
+    [48, 64, 40],
+    [70, 94, 46],
+    [96, 122, 54],
+    [126, 148, 64],
+    [160, 172, 84],
+];
 pub const BARK_RAMP: [[u8; 3]; 5] = [[46, 30, 28], [74, 50, 40], [102, 74, 52], [130, 98, 68], [160, 126, 88]];
 
 /// A pebbly material: stones of a ramp's lighter shades set in a matrix of its
@@ -135,16 +153,7 @@ const STONE_ROCKS: Rocks = Rocks {
 pub const PATH: &str = "assets/tiles.png";
 
 /// Neighbour bit order, matching `autotile`: N, E, S, W, NE, SE, SW, NW.
-pub const DIRS: [(i32, i32); 8] = [
-    (0, -1),
-    (1, 0),
-    (0, 1),
-    (-1, 0),
-    (1, -1),
-    (1, 1),
-    (-1, 1),
-    (-1, -1),
-];
+pub const DIRS: [(i32, i32); 8] = [(0, -1), (1, 0), (0, 1), (-1, 0), (1, -1), (1, 1), (-1, 1), (-1, -1)];
 
 /// Top-left pixel of a material's 4x4-tile block.
 pub fn material_block(mat: u16) -> (u32, u32) {
@@ -154,10 +163,7 @@ pub fn material_block(mat: u16) -> (u32, u32) {
 /// Top-left pixel of a mask cell.
 pub fn mask_cell(mask: u16) -> (u32, u32) {
     let i = mask as u32;
-    (
-        (i % MASK_COLS) * CELL,
-        MASK_BAND_Y + (i / MASK_COLS) * CELL,
-    )
+    ((i % MASK_COLS) * CELL, MASK_BAND_Y + (i / MASK_COLS) * CELL)
 }
 
 /// Loads the atlas, generating and writing it first if the file is absent, so a
@@ -193,8 +199,7 @@ pub fn generate_to_file() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(dir) = Path::new(PATH).parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let image = image::RgbaImage::from_raw(WIDTH, HEIGHT, generate())
-        .ok_or("generated atlas has the wrong length")?;
+    let image = image::RgbaImage::from_raw(WIDTH, HEIGHT, generate()).ok_or("generated atlas has the wrong length")?;
     image.save(PATH)?;
     Ok(())
 }
@@ -301,13 +306,24 @@ fn rock_shades(rocks: &Rocks) -> (Vec<u8>, Vec<i32>) {
     for y in 0..size {
         for x in 0..size {
             let me = ids[at(x, y)];
-            let (up, down, left, right) = (ids[at(x, y - 1)], ids[at(x, y + 1)], ids[at(x - 1, y)], ids[at(x + 1, y)]);
+            let (up, down, left, right) = (
+                ids[at(x, y - 1)],
+                ids[at(x, y + 1)],
+                ids[at(x - 1, y)],
+                ids[at(x + 1, y)],
+            );
             shades[at(x, y)] = if me < 0 {
                 if [up, down, left, right].iter().any(|&n| n >= 0) {
                     0 // the dark gap that sets each pebble off
                 } else {
                     let v = noise(rocks.seed ^ 0xC1, (x / 3) as u32, (y / 3) as u32);
-                    rocks.matrix[if v < 0.3 { 0 } else if v < 0.88 { 1 } else { 2 }]
+                    rocks.matrix[if v < 0.3 {
+                        0
+                    } else if v < 0.88 {
+                        1
+                    } else {
+                        2
+                    }]
                 }
             } else {
                 let body = bodies[me as usize];
@@ -388,7 +404,8 @@ fn bark_shades() -> Vec<u8> {
     }
     let groove_at = |g: usize, y: i32| {
         let (x, phase) = grooves[g];
-        let wander = (y as f32 * period * 2.0 + phase).sin() * 0.9 + (y as f32 * period * 5.0 + phase * 1.7).sin() * 0.5;
+        let wander =
+            (y as f32 * period * 2.0 + phase).sin() * 0.9 + (y as f32 * period * 5.0 + phase * 1.7).sin() * 0.5;
         x + wander.round() as i32
     };
 
@@ -422,7 +439,13 @@ fn bark_shades() -> Vec<u8> {
                 bodies.resize(id as usize + 1, 2);
             }
             let v = noise(seed ^ 0xB0, g as u32, plate as u32);
-            bodies[id as usize] = if v < 0.2 { 1 } else if v > 0.85 { 3 } else { 2 };
+            bodies[id as usize] = if v < 0.2 {
+                1
+            } else if v > 0.85 {
+                3
+            } else {
+                2
+            };
         }
     }
 
@@ -456,7 +479,10 @@ fn bark_shades() -> Vec<u8> {
             continue;
         }
         let (tx, ty) = ((t % BLOCK_TILES) * CELL, (t / BLOCK_TILES) * CELL);
-        let c = [tx as f32 + 5.0 + noise(seed ^ 0x4C, t, 0) * 6.0, ty as f32 + 4.0 + noise(seed ^ 0x4D, t, 0) * 8.0];
+        let c = [
+            tx as f32 + 5.0 + noise(seed ^ 0x4C, t, 0) * 6.0,
+            ty as f32 + 4.0 + noise(seed ^ 0x4D, t, 0) * 8.0,
+        ];
         for y in ty..ty + CELL {
             for x in tx..tx + CELL {
                 let (dx, dy) = (x as f32 + 0.5 - c[0], y as f32 + 0.5 - c[1]);
@@ -498,11 +524,17 @@ fn mask_texture(px: &mut [u8], mask: u16) {
 fn leaf_alpha(x: u32, y: u32, variant: u16) -> u8 {
     let scale = 0.85 + 0.1 * variant as f32;
     let p = [x as f32 + 0.5 - 8.0, y as f32 + 0.5 - 8.0];
-    let lobes = [([0.0, 0.5], 5.2), ([-3.0, -2.0], 3.4), ([3.2, -1.8], 3.2), ([-1.8, 3.6], 3.0), ([3.0, 3.0], 3.3)];
+    let lobes = [
+        ([0.0, 0.5], 5.2),
+        ([-3.0, -2.0], 3.4),
+        ([3.2, -1.8], 3.2),
+        ([-1.8, 3.6], 3.0),
+        ([3.0, 3.0], 3.3),
+    ];
     let rough = (noise(0x1EAF ^ variant as u32, x / 2, y / 2) - 0.5) * 1.6;
-    let inside = lobes.iter().any(|&(c, r): &([f32; 2], f32)| {
-        (p[0] - c[0] * scale).hypot(p[1] - c[1] * scale) < r * scale + rough
-    });
+    let inside = lobes
+        .iter()
+        .any(|&(c, r): &([f32; 2], f32)| (p[0] - c[0] * scale).hypot(p[1] - c[1] * scale) < r * scale + rough);
     if inside { 255 } else { 0 }
 }
 
@@ -561,11 +593,17 @@ mod tests {
         assert_eq!(px.len(), (WIDTH * HEIGHT * 4) as usize);
         for mask in 0..MASK_COUNT {
             let (x, y) = mask_cell(mask);
-            assert!(x + CELL <= WIDTH && y + CELL <= HEIGHT, "mask {mask} cell at ({x}, {y})");
+            assert!(
+                x + CELL <= WIDTH && y + CELL <= HEIGHT,
+                "mask {mask} cell at ({x}, {y})"
+            );
         }
         for mat in 0..MATERIALS as u16 {
             let (x, y) = material_block(mat);
-            assert!(x + BLOCK <= WIDTH && y + BLOCK <= HEIGHT, "material {mat} block at ({x}, {y})");
+            assert!(
+                x + BLOCK <= WIDTH && y + BLOCK <= HEIGHT,
+                "material {mat} block at ({x}, {y})"
+            );
         }
         assert!(MASK_BAND_Y >= BLOCK, "masks must not overlap the material band");
     }
@@ -597,7 +635,10 @@ mod tests {
     fn a_diagonal_only_mask_covers_its_corner_and_nothing_else() {
         let px = generate();
         let (ox, oy) = mask_cell(1 << 4); // bit 4 is north-east
-        assert!(alpha_at(&px, ox + CELL - 1, oy) > 150, "the north-east corner is not covered");
+        assert!(
+            alpha_at(&px, ox + CELL - 1, oy) > 150,
+            "the north-east corner is not covered"
+        );
         assert_eq!(alpha_at(&px, ox, oy + CELL - 1), 0, "the opposite corner leaked");
         assert_eq!(alpha_at(&px, ox, oy), 0, "the north-west corner leaked");
     }
@@ -605,7 +646,12 @@ mod tests {
     #[test]
     fn rock_materials_keep_to_their_ramp() {
         let px = generate();
-        for (mat, ramp) in [(MAT_DIRT, DIRT_RAMP), (MAT_STONE, STONE_RAMP), (MAT_GRASS, GRASS_RAMP), (MAT_BARK, BARK_RAMP)] {
+        for (mat, ramp) in [
+            (MAT_DIRT, DIRT_RAMP),
+            (MAT_STONE, STONE_RAMP),
+            (MAT_GRASS, GRASS_RAMP),
+            (MAT_BARK, BARK_RAMP),
+        ] {
             let (ox, oy) = material_block(mat);
             let mut used = std::collections::HashSet::new();
             for y in 0..BLOCK {
@@ -637,7 +683,10 @@ mod tests {
         let dark = |x: usize, y: usize| shades[y * size + x] == 0;
         let below = mean(&|x, y| !dark(x, y) && dark(x, y - 1));
         let above = mean(&|x, y| !dark(x, y) && dark(x, y + 1));
-        assert!(below > above + 0.8, "plate tops {below:.2} should be well lighter than bottoms {above:.2}");
+        assert!(
+            below > above + 0.8,
+            "plate tops {below:.2} should be well lighter than bottoms {above:.2}"
+        );
     }
 
     #[test]
@@ -662,7 +711,10 @@ mod tests {
                 }
             }
             let (top, bottom) = (top.0 / top.1 as f32, bottom.0 / bottom.1 as f32);
-            assert!(top > bottom + 1.5, "pebble tops ({top:.2}) should be lighter than undersides ({bottom:.2})");
+            assert!(
+                top > bottom + 1.5,
+                "pebble tops ({top:.2}) should be lighter than undersides ({bottom:.2})"
+            );
         }
     }
 
@@ -670,8 +722,13 @@ mod tests {
     fn pebbles_wrap_across_the_block_edge() {
         let (_, ids) = rock_shades(&STONE_ROCKS);
         let size = BLOCK as usize;
-        let shared = (0..size).filter(|&y| ids[y * size] >= 0 && ids[y * size] == ids[y * size + size - 1]).count();
-        assert!(shared > 0, "no pebble continues across the seam, so the block edge shows");
+        let shared = (0..size)
+            .filter(|&y| ids[y * size] >= 0 && ids[y * size] == ids[y * size + size - 1])
+            .count();
+        assert!(
+            shared > 0,
+            "no pebble continues across the seam, so the block edge shows"
+        );
     }
 
     #[test]
@@ -710,9 +767,8 @@ mod tests {
         };
         for tile in TILE_TYPES.iter().filter(|t| t.color[3] > 0) {
             // Tile-sized sub-cells must differ, or the eye sees a grid.
-            let differs = (0..CELL).any(|y| {
-                (0..CELL).any(|x| value(tile.atlas_mat, x, y) != value(tile.atlas_mat, x + CELL, y))
-            });
+            let differs =
+                (0..CELL).any(|y| (0..CELL).any(|x| value(tile.atlas_mat, x, y) != value(tile.atlas_mat, x + CELL, y)));
             assert!(differs, "{}'s second tile repeats the first exactly", tile.name);
         }
     }

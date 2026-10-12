@@ -188,7 +188,10 @@ impl Player {
         } else {
             frames::IDLE
         };
-        Frame { index, mirrored: self.facing < 0.0 }
+        Frame {
+            index,
+            mirrored: self.facing < 0.0,
+        }
     }
 
     /// Where the player is drawn: the true position plus the unspent step lag.
@@ -223,10 +226,8 @@ impl Player {
 
         // Stepping needs ground under the body and a moment of intent; `supported`
         // rather than `grounded` because the body may be a fraction of a tile up.
-        let may_step_up =
-            physics::supported(world, self.pos, HALF) && self.step_press >= STEP_DELAY;
-        let contacts =
-            physics::move_box(&mut self.pos, &mut self.vel, HALF, world, dt, may_step_up);
+        let may_step_up = physics::supported(world, self.pos, HALF) && self.step_press >= STEP_DELAY;
+        let contacts = physics::move_box(&mut self.pos, &mut self.vel, HALF, world, dt, may_step_up);
 
         if contacts.stepped_up {
             self.step_press = 0.0;
@@ -254,8 +255,17 @@ impl Player {
     }
 
     fn respawn(&mut self) {
-        let (inventory, look, swing) = (std::mem::replace(&mut self.inventory, Inventory::starter()), self.look, self.swing);
-        *self = Player { inventory, look, swing, ..Player::new(self.spawn) };
+        let (inventory, look, swing) = (
+            std::mem::replace(&mut self.inventory, Inventory::starter()),
+            self.look,
+            self.swing,
+        );
+        *self = Player {
+            inventory,
+            look,
+            swing,
+            ..Player::new(self.spawn)
+        };
     }
 
     /// Removes the breakable tile at `target` if it is within reach and no tree
@@ -295,10 +305,7 @@ impl Player {
 
 fn overlaps_tile(pos: [f32; 2], half: [f32; 2], tile: [i32; 2]) -> bool {
     let (x, y) = (tile[0] as f32, tile[1] as f32);
-    pos[0] - half[0] < x + 1.0
-        && pos[0] + half[0] > x
-        && pos[1] - half[1] < y + 1.0
-        && pos[1] + half[1] > y
+    pos[0] - half[0] < x + 1.0 && pos[0] + half[0] > x && pos[1] - half[1] < y + 1.0 && pos[1] + half[1] > y
 }
 
 /// Strongest drag among the non-solid tiles the box overlaps. All tile types are
@@ -354,7 +361,13 @@ mod tests {
         let mut player = standing_player();
         walk(&mut player, &world, -1.0, 0.3);
         walk(&mut player, &world, 0.0, 0.1);
-        assert_eq!(player.frame(), Frame { index: frames::IDLE, mirrored: true });
+        assert_eq!(
+            player.frame(),
+            Frame {
+                index: frames::IDLE,
+                mirrored: true
+            }
+        );
     }
 
     #[test]
@@ -372,7 +385,11 @@ mod tests {
         }
         // A second at walking speed is WALK_SPEED / STRIDE frame changes.
         let expected = (WALK_SPEED / STRIDE).round() as usize;
-        assert!(seen.len().abs_diff(expected) <= 1, "{} frame changes, expected about {expected}", seen.len());
+        assert!(
+            seen.len().abs_diff(expected) <= 1,
+            "{} frame changes, expected about {expected}",
+            seen.len()
+        );
         // In the mud, at half speed, the same distance takes the same frames.
         let mut slow = standing_player();
         let mut fast = standing_player();
@@ -382,7 +399,11 @@ mod tests {
         for _ in 0..60 {
             slow.update(&world, Intent { walk: 0.5, jump: false }, DT);
         }
-        assert_eq!(slow.frame().index, fast.frame().index, "the same distance shows the same frame");
+        assert_eq!(
+            slow.frame().index,
+            fast.frame().index,
+            "the same distance shows the same frame"
+        );
     }
 
     #[test]
@@ -404,7 +425,13 @@ mod tests {
         let mut player = standing_player();
         walk(&mut player, &world, 1.0, 0.2);
         player.act_toward(player.pos[0] - 3.0, USE_TIME);
-        assert_eq!(player.frame(), Frame { index: frames::USE[0], mirrored: true });
+        assert_eq!(
+            player.frame(),
+            Frame {
+                index: frames::USE[0],
+                mirrored: true
+            }
+        );
         // Walking on doesn't turn it back mid-action, and the arm swings on...
         walk(&mut player, &world, 1.0, USE_TIME * 0.6);
         let mid = player.frame();
@@ -425,7 +452,10 @@ mod tests {
         let player = standing_player();
         let before = world.chunk_revision(0, 1);
 
-        assert!(player.mine(&mut world, [21, GROUND]), "a tile at the player's feet is in reach");
+        assert!(
+            player.mine(&mut world, [21, GROUND]),
+            "a tile at the player's feet is in reach"
+        );
         assert_eq!(world.get(21, GROUND), AIR);
         assert!(
             world.chunk_revision(0, 1) > before,
@@ -438,10 +468,16 @@ mod tests {
         let mut world = flat_world();
         let player = standing_player();
 
-        assert!(!player.mine(&mut world, [60, GROUND]), "far tile should be out of reach");
+        assert!(
+            !player.mine(&mut world, [60, GROUND]),
+            "far tile should be out of reach"
+        );
         assert_eq!(world.get(60, GROUND), STONE);
         assert!(!player.mine(&mut world, [20, GROUND - 5]), "air is not mineable");
-        assert!(!player.mine(&mut world, [-1, GROUND]), "outside the world is not mineable");
+        assert!(
+            !player.mine(&mut world, [-1, GROUND]),
+            "outside the world is not mineable"
+        );
     }
 
     #[test]
@@ -452,15 +488,28 @@ mod tests {
         for i in 0..8 {
             world.set(22, GROUND - 1 - i, TRUNK);
         }
-        world.forest.trees.push(Tree { x: 22, ground: GROUND, width: 1, height: 8, full: 8, seed: 1 });
+        world.forest.trees.push(Tree {
+            x: 22,
+            ground: GROUND,
+            width: 1,
+            height: 8,
+            full: 8,
+            seed: 1,
+        });
         let mut player = standing_player();
 
-        assert!(!player.mine(&mut world, [22, GROUND]), "a standing tree anchors its ground");
+        assert!(
+            !player.mine(&mut world, [22, GROUND]),
+            "a standing tree anchors its ground"
+        );
         assert!(player.mine(&mut world, [22, GROUND - 2]), "trunk cells are choppable");
         for _ in 0..30 {
             player.update(&world, Intent { walk: 1.0, jump: false }, DT);
         }
-        assert!(player.pos[0] > 23.0, "the player walks in front of the trunk, not into it");
+        assert!(
+            player.pos[0] > 23.0,
+            "the player walks in front of the trunk, not into it"
+        );
     }
 
     #[test]
@@ -469,7 +518,10 @@ mod tests {
         let mut world = flat_world();
         let player = standing_player();
 
-        assert!(player.place(&mut world, [22, GROUND - 2], TORCH), "empty space in reach");
+        assert!(
+            player.place(&mut world, [22, GROUND - 2], TORCH),
+            "empty space in reach"
+        );
         assert_eq!(world.get(22, GROUND - 2), TORCH);
 
         assert!(!player.place(&mut world, [22, GROUND - 2], TORCH), "already occupied");
@@ -484,7 +536,10 @@ mod tests {
         let inside = [player.pos[0] as i32, player.pos[1] as i32];
 
         assert!(!player.place(&mut world, inside, STONE), "would entomb the player");
-        assert!(player.place(&mut world, inside, TORCH), "a torch is not solid, so it is fine");
+        assert!(
+            player.place(&mut world, inside, TORCH),
+            "a torch is not solid, so it is fine"
+        );
     }
 
     #[test]
@@ -565,9 +620,16 @@ mod tests {
             peak = peak.min(player.pos[1]);
         }
         let height = resting - peak;
-        assert!((4.0..7.0).contains(&height), "jump peaked {height} tiles above the ground");
+        assert!(
+            (4.0..7.0).contains(&height),
+            "jump peaked {height} tiles above the ground"
+        );
         assert!(player.grounded, "should have landed again");
-        assert!((player.pos[1] - resting).abs() < 0.01, "landed at {} not {resting}", player.pos[1]);
+        assert!(
+            (player.pos[1] - resting).abs() < 0.01,
+            "landed at {} not {resting}",
+            player.pos[1]
+        );
     }
 
     #[test]

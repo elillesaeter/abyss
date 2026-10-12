@@ -45,7 +45,10 @@ fn frame_to_world(player: &Player, p: [f32; 2]) -> [f32; 2] {
     let at = player.visual_pos();
     let feet = at[1] + player::HALF[1];
     let mirror = if player.frame().mirrored { -1.0 } else { 1.0 };
-    [at[0] + mirror * (p[0] - FRAME_W as f32 * 0.5) / CELL as f32, feet + (p[1] - FRAME_H as f32) / CELL as f32]
+    [
+        at[0] + mirror * (p[0] - FRAME_W as f32 * 0.5) / CELL as f32,
+        feet + (p[1] - FRAME_H as f32) / CELL as f32,
+    ]
 }
 
 /// The hand `arc` of the way along a swing, and which way a held weapon points
@@ -59,7 +62,9 @@ pub fn grip(player: &Player, arc: f32) -> ([f32; 2], [f32; 2]) {
 /// The weapon, hand to tip, at small steps along the arc swept so far. A mob
 /// anywhere in it has been hit.
 fn swept(player: &Player) -> Vec<([f32; 2], [f32; 2])> {
-    let Some((weapon, now)) = player.wielded() else { return Vec::new() };
+    let Some((weapon, now)) = player.wielded() else {
+        return Vec::new();
+    };
     let reach = weapon.reach() / CELL as f32;
     let steps = (now / 0.04).ceil().max(1.0) as usize;
     (0..=steps)
@@ -95,7 +100,8 @@ pub fn update(world: &World, player: &mut Player, entities: &mut Entities, popup
     let weapon = player.wielded().map(|w| w.0);
     let mut burst = Vec::new();
     for (entity, body, kind, state) in entities.query_mut::<(hecs::Entity, &mut Body, &Kind, &mut MobState)>() {
-        let hit = weapon.filter(|_| state.last_swing != player.swing && blade.iter().any(|&(a, b)| segment_hits_box(a, b, body)));
+        let hit = weapon
+            .filter(|_| state.last_swing != player.swing && blade.iter().any(|&(a, b)| segment_hits_box(a, b, body)));
         if let Some(weapon) = hit {
             state.last_swing = player.swing;
             state.health -= weapon.damage;
@@ -104,7 +110,12 @@ pub fn update(world: &World, player: &mut Player, entities: &mut Entities, popup
             let heft = (body.half[0] / 0.75).max(1.0);
             let away = if body.pos[0] >= player.pos[0] { 1.0 } else { -1.0 };
             body.vel = [away * weapon.knockback / heft, -weapon.knockback * KNOCK_LIFT / heft];
-            popups.push(Popup { pos: [body.pos[0], body.pos[1] - body.half[1]], value: weapon.damage, age: 0.0, hurt_player: false });
+            popups.push(Popup {
+                pos: [body.pos[0], body.pos[1] - body.half[1]],
+                value: weapon.damage,
+                age: 0.0,
+                hurt_player: false,
+            });
             if state.health <= 0 {
                 burst.push(entity);
             }
@@ -114,7 +125,12 @@ pub fn update(world: &World, player: &mut Player, entities: &mut Entities, popup
         if !player.is_dead() && overlap(body.pos, body.half, player.pos, player::HALF) {
             let damage = mob::kind(kind.0).damage;
             if player.hurt(damage, body.pos[0]) {
-                popups.push(Popup { pos: [player.pos[0], player.pos[1] - player::HALF[1]], value: damage, age: 0.0, hurt_player: true });
+                popups.push(Popup {
+                    pos: [player.pos[0], player.pos[1] - player::HALF[1]],
+                    value: damage,
+                    age: 0.0,
+                    hurt_player: true,
+                });
             }
         }
     }
@@ -125,7 +141,13 @@ pub fn update(world: &World, player: &mut Player, entities: &mut Entities, popup
         if let Some(c) = carried {
             let mut drop = Body::new(pos, DROP_HALF);
             drop.vel = [0.0, -6.0];
-            entities.spawn((drop, Drop { item: c.item, count: c.count }));
+            entities.spawn((
+                drop,
+                Drop {
+                    item: c.item,
+                    count: c.count,
+                },
+            ));
         }
     }
 
@@ -134,7 +156,11 @@ pub fn update(world: &World, player: &mut Player, entities: &mut Entities, popup
     for (entity, body, drop) in entities.query_mut::<(hecs::Entity, &mut Body, &mut Drop)>() {
         let to = [player.pos[0] - body.pos[0], player.pos[1] - body.pos[1]];
         let pulled = !player.is_dead() && to[0].hypot(to[1]) < PULL_REACH;
-        body.vel[0] = if pulled { to[0].signum() * PULL_SPEED } else { body.vel[0] * (-4.0 * dt).exp() };
+        body.vel[0] = if pulled {
+            to[0].signum() * PULL_SPEED
+        } else {
+            body.vel[0] * (-4.0 * dt).exp()
+        };
         body.vel[1] = (body.vel[1] + physics::GRAVITY * dt).min(physics::MAX_FALL);
         physics::move_box(&mut body.pos, &mut body.vel, body.half, world, dt, false);
         if pulled && overlap(body.pos, body.half, player.pos, player::HALF) {
@@ -198,9 +224,20 @@ mod tests {
         player.use_held(&mut World::new(32, 32), [30.0, 20.0]);
         run(&world, &mut player, &mut entities, &mut popups, STARTER_SWORD.use_time);
         let state = *entities.get::<&MobState>(cube).unwrap();
-        assert_eq!(state.health, mob::kind(mob::GREEN_CUBE).health - STARTER_SWORD.damage, "hit exactly once");
-        assert!(entities.get::<&Body>(cube).unwrap().vel[0] > 0.0, "thrown away from the player");
-        assert_eq!(popups.iter().filter(|p| !p.hurt_player).count(), 1, "one number per hit");
+        assert_eq!(
+            state.health,
+            mob::kind(mob::GREEN_CUBE).health - STARTER_SWORD.damage,
+            "hit exactly once"
+        );
+        assert!(
+            entities.get::<&Body>(cube).unwrap().vel[0] > 0.0,
+            "thrown away from the player"
+        );
+        assert_eq!(
+            popups.iter().filter(|p| !p.hurt_player).count(),
+            1,
+            "one number per hit"
+        );
     }
 
     #[test]
@@ -214,7 +251,10 @@ mod tests {
         player.use_held(&mut World::new(32, 32), [30.0, 20.0]);
         run(&world, &mut player, &mut entities, &mut popups, STARTER_SWORD.use_time);
         for cube in [behind, far] {
-            assert_eq!(entities.get::<&MobState>(cube).unwrap().health, mob::kind(mob::GREEN_CUBE).health);
+            assert_eq!(
+                entities.get::<&MobState>(cube).unwrap().health,
+                mob::kind(mob::GREEN_CUBE).health
+            );
         }
     }
 
@@ -225,19 +265,41 @@ mod tests {
         let mut entities = Entities::new();
         let seed = (0..).find(|&s| mob::contents(s).is_some()).unwrap();
         let carried = mob::contents(seed).unwrap();
-        mob::spawn(&mut entities, mob::GREEN_CUBE, [21.8, GROUND as f32 - mob::kind(mob::GREEN_CUBE).half[1]], seed);
+        mob::spawn(
+            &mut entities,
+            mob::GREEN_CUBE,
+            [21.8, GROUND as f32 - mob::kind(mob::GREEN_CUBE).half[1]],
+            seed,
+        );
         let mut popups = Vec::new();
         for _ in 0..2 {
             player.use_held(&mut World::new(32, 32), [30.0, 20.0]);
-            run(&world, &mut player, &mut entities, &mut popups, STARTER_SWORD.use_time + DT);
+            run(
+                &world,
+                &mut player,
+                &mut entities,
+                &mut popups,
+                STARTER_SWORD.use_time + DT,
+            );
             // Hold it in place for the next swing.
             for body in entities.query_mut::<&mut Body>() {
                 body.pos[0] = 21.8;
             }
         }
-        assert_eq!(entities.query_mut::<&MobState>().into_iter().count(), 0, "two hits burst a green cube");
+        assert_eq!(
+            entities.query_mut::<&MobState>().into_iter().count(),
+            0,
+            "two hits burst a green cube"
+        );
         run(&world, &mut player, &mut entities, &mut popups, 1.0);
-        let bones: u16 = player.inventory.slots.iter().flatten().filter(|s| s.item == Item::Bone).map(|s| s.count).sum();
+        let bones: u16 = player
+            .inventory
+            .slots
+            .iter()
+            .flatten()
+            .filter(|s| s.item == Item::Bone)
+            .map(|s| s.count)
+            .sum();
         assert_eq!(bones, carried.count, "its bones end up in the inventory");
         assert_eq!(entities.query_mut::<&Drop>().into_iter().count(), 0);
     }
@@ -252,7 +314,11 @@ mod tests {
         cube_at(&mut entities, mob::RED_CUBE, 20.5);
         update(&world, &mut player, &mut entities, &mut popups, DT);
         update(&world, &mut player, &mut entities, &mut popups, DT);
-        assert_eq!(player.health, player::MAX_HEALTH - damage, "hurt once, then untouchable");
+        assert_eq!(
+            player.health,
+            player::MAX_HEALTH - damage,
+            "hurt once, then untouchable"
+        );
         assert!(popups.iter().any(|p| p.hurt_player && p.value == damage));
 
         // Keep touching until dead, then wait out the respawn.
@@ -269,7 +335,13 @@ mod tests {
         }
         assert!(player.is_dead());
         entities.clear();
-        run(&world, &mut player, &mut entities, &mut popups, player::RESPAWN_TIME + 0.1);
+        run(
+            &world,
+            &mut player,
+            &mut entities,
+            &mut popups,
+            player::RESPAWN_TIME + 0.1,
+        );
         assert!(!player.is_dead());
         assert_eq!(player.health, player::MAX_HEALTH);
         assert!((player.pos[0] - spawn_x).abs() < 0.01, "back at the spawn point");

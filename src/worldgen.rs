@@ -10,8 +10,7 @@ use crate::world::World;
 
 type GenPass = fn(&mut World, u64);
 
-pub const PASSES: &[(&str, GenPass)] =
-    &[("terrain", terrain_pass), ("grass", grass_pass), ("trees", tree_pass)];
+pub const PASSES: &[(&str, GenPass)] = &[("terrain", terrain_pass), ("grass", grass_pass), ("trees", tree_pass)];
 
 pub fn generate(world: &mut World, seed: u64) {
     for (_name, pass) in PASSES {
@@ -79,15 +78,29 @@ fn tree_pass(world: &mut World, seed: u64) {
         let width = if r % 10 < 3 { 2 } else { 1 };
         let height = MIN_HEIGHT + ((r >> 8) % (MAX_HEIGHT - MIN_HEIGHT + 1) as u64) as i32;
         let ground = world.highest_solid(x);
-        let fits = (0..width).all(|c| {
-            world.highest_solid(x + c) == ground && world.decor(x + c, ground) & DECOR_GRASS != 0
-        }) && ground - height > 1;
+        let fits = (0..width)
+            .all(|c| world.highest_solid(x + c) == ground && world.decor(x + c, ground) & DECOR_GRASS != 0)
+            && ground - height > 1;
         if !fits {
             x += 1;
             continue;
         }
-        trees::plant(world, Tree { x, ground, width, height, full: height, seed: hash(seed, -(x as i64)) });
-        let gap = if (r >> 20) % 4 == 0 { 2 + (r >> 24) % 2 } else { 8 + (r >> 24) % 7 };
+        trees::plant(
+            world,
+            Tree {
+                x,
+                ground,
+                width,
+                height,
+                full: height,
+                seed: hash(seed, -(x as i64)),
+            },
+        );
+        let gap = if (r >> 20) % 4 == 0 {
+            2 + (r >> 24) % 2
+        } else {
+            8 + (r >> 24) % 7
+        };
         x += width + gap as i32;
     }
 }
@@ -144,8 +157,8 @@ mod tests {
     fn different_seeds_produce_different_worlds() {
         let (a, b) = (generated(1337), generated(7331));
         // Chunk row 0 is pure sky at this world height, so compare the whole grid.
-        let differs = (0..a.height_chunks())
-            .any(|cy| (0..a.width_chunks()).any(|cx| a.chunk(cx, cy).ids != b.chunk(cx, cy).ids));
+        let differs =
+            (0..a.height_chunks()).any(|cy| (0..a.width_chunks()).any(|cx| a.chunk(cx, cy).ids != b.chunk(cx, cy).ids));
         assert!(differs, "two seeds generated identical worlds");
     }
 
@@ -194,7 +207,10 @@ mod tests {
         let w = generated(99);
         for x in 0..w.width() {
             let surface = surface_y(w.height(), 99, x);
-            assert!(surface >= 8 && surface < w.height() - 64, "surface {surface} out of range");
+            assert!(
+                surface >= 8 && surface < w.height() - 64,
+                "surface {surface} out of range"
+            );
             assert!(!is_solid(w.get(x, surface - 1)), "column {x} is buried at the surface");
             assert!(is_solid(w.get(x, surface)), "column {x} has no ground at the surface");
             assert!(is_solid(w.get(x, w.height() - 1)), "column {x} is hollow at the bottom");
@@ -205,18 +221,31 @@ mod tests {
     fn trees_stand_on_grass_within_the_height_range_and_spaced_as_designed() {
         let w = generated(42);
         let trees = &w.forest.trees;
-        assert!(trees.len() > 100, "only {} trees on a {}-wide world", trees.len(), w.width());
+        assert!(
+            trees.len() > 100,
+            "only {} trees on a {}-wide world",
+            trees.len(),
+            w.width()
+        );
         let mut close = 0;
         for pair in trees.windows(2) {
             let gap = pair[1].x - (pair[0].x + pair[0].width);
             assert!(gap >= 2, "trees overlap or touch at x={}", pair[1].x);
             close += (gap <= 3) as usize;
         }
-        assert!(close > 0 && close < trees.len() / 2, "{close} close gaps of {}", trees.len());
+        assert!(
+            close > 0 && close < trees.len() / 2,
+            "{close} close gaps of {}",
+            trees.len()
+        );
         for t in trees {
             assert!((MIN_HEIGHT..=MAX_HEIGHT).contains(&t.height));
             for c in 0..t.width {
-                assert!(w.decor(t.x + c, t.ground) & DECOR_GRASS != 0, "tree at {} not on grass", t.x);
+                assert!(
+                    w.decor(t.x + c, t.ground) & DECOR_GRASS != 0,
+                    "tree at {} not on grass",
+                    t.x
+                );
                 assert!((0..t.height).all(|i| w.get(t.x + c, t.row_y(i)) == TRUNK));
             }
         }

@@ -53,7 +53,15 @@ pub const RED_CUBE: u16 = 2;
 pub const DIGGER: u16 = 3;
 
 /// A gel cube's table entry: its hitbox is its drawn width square.
-const fn cube(name: &'static str, size: usize, speed: f32, jump_speed: f32, color: [u8; 4], health: i32, damage: i32) -> MobKind {
+const fn cube(
+    name: &'static str,
+    size: usize,
+    speed: f32,
+    jump_speed: f32,
+    color: [u8; 4],
+    health: i32,
+    damage: i32,
+) -> MobKind {
     let half = crate::icons::CUBES[size].1 as f32 / 32.0;
     MobKind {
         name,
@@ -169,19 +177,35 @@ const STRETCH_MAX: f32 = 0.22;
 
 impl MobState {
     pub fn new(kind: &MobKind) -> MobState {
-        MobState { health: kind.health, wait: WAIT, ..MobState::default() }
+        MobState {
+            health: kind.health,
+            wait: WAIT,
+            ..MobState::default()
+        }
     }
 
     fn with_seed(kind: &MobKind, seed: u64) -> MobState {
-        MobState { seed, wait: pause(seed, 0), ..MobState::new(kind) }
+        MobState {
+            seed,
+            wait: pause(seed, 0),
+            ..MobState::new(kind)
+        }
     }
 
     /// Drawn scale (x, y): squashed flat on landing, stretched tall rising, and
     /// always the same area, so it reads as soft rather than resized.
     pub fn deform(&self, body: &Body) -> [f32; 2] {
-        let stretch = if body.grounded { 0.0 } else { (-body.vel[1] / 60.0).clamp(0.0, STRETCH_MAX) };
+        let stretch = if body.grounded {
+            0.0
+        } else {
+            (-body.vel[1] / 60.0).clamp(0.0, STRETCH_MAX)
+        };
         // Squishing down before a leap, so the player can see it coming.
-        let windup = if body.grounded { ((self.ground_time - (self.wait - WINDUP)) / WINDUP).clamp(0.0, 1.0) } else { 0.0 };
+        let windup = if body.grounded {
+            ((self.ground_time - (self.wait - WINDUP)) / WINDUP).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         let tall = ((1.0 - self.squash - WINDUP_SQUASH * windup) * (1.0 + stretch)).clamp(0.55, 1.45);
         [1.0 / tall, tall]
     }
@@ -208,9 +232,17 @@ pub fn contents(seed: u64) -> Option<Contents> {
     let spot = |k: u64| {
         let r = hash(seed ^ k);
         let frac = |shift: u32| ((r >> shift) % 1000) as f32 / 1000.0;
-        [frac(0) * 0.5 - 0.25, frac(10) * 0.4 - 0.15, frac(20) * std::f32::consts::TAU]
+        [
+            frac(0) * 0.5 - 0.25,
+            frac(10) * 0.4 - 0.15,
+            frac(20) * std::f32::consts::TAU,
+        ]
     };
-    Some(Contents { item: Item::Bone, count: 1 + (h >> 8) as u16 % 2, spots: [spot(1), spot(2)] })
+    Some(Contents {
+        item: Item::Bone,
+        count: 1 + (h >> 8) as u16 % 2,
+        spots: [spot(1), spot(2)],
+    })
 }
 
 pub fn hash(mut h: u64) -> u64 {
@@ -235,14 +267,24 @@ fn leaper(ctx: &BrainCtx) -> MobAction {
     let kind = ctx.kind;
     let dx = ctx.player[0] - ctx.body.pos[0];
     if dx.abs() > CHASE {
-        return MobAction { leap: Some([0.0, -kind.jump_speed * 0.5]), ..MobAction::default() };
+        return MobAction {
+            leap: Some([0.0, -kind.jump_speed * 0.5]),
+            ..MobAction::default()
+        };
     }
-    let (up, reach) = if ctx.big { (kind.jump_speed * BIG_LIFT, kind.speed * BIG_REACH) } else { (kind.jump_speed, kind.speed) };
+    let (up, reach) = if ctx.big {
+        (kind.jump_speed * BIG_LIFT, kind.speed * BIG_REACH)
+    } else {
+        (kind.jump_speed, kind.speed)
+    };
     // Up and back down to the same height.
     let flight = 2.0 * up / physics::GRAVITY;
     let target = ctx.player[0] + ctx.player_vel[0] * flight;
     let across = ((target - ctx.body.pos[0]) / flight).clamp(-reach, reach);
-    MobAction { leap: Some([across, -up]), ..MobAction::default() }
+    MobAction {
+        leap: Some([across, -up]),
+        ..MobAction::default()
+    }
 }
 
 /// Heads for the last mining it heard, tunnelling through anything in the way.
@@ -262,12 +304,14 @@ fn digger(ctx: &BrainCtx) -> MobAction {
 
     // Blocked horizontally: remove the tile in the way rather than giving up.
     if walk != 0.0 {
-        let ahead = [
-            (pos[0] + walk * (half[0] + 0.4)).floor() as i32,
-            pos[1].floor() as i32,
-        ];
+        let ahead = [(pos[0] + walk * (half[0] + 0.4)).floor() as i32, pos[1].floor() as i32];
         if is_solid(ctx.world.get(ahead[0], ahead[1])) {
-            return MobAction { walk, jump: false, mine: Some(ahead), leap: None };
+            return MobAction {
+                walk,
+                jump: false,
+                mine: Some(ahead),
+                leap: None,
+            };
         }
     }
 
@@ -275,11 +319,21 @@ fn digger(ctx: &BrainCtx) -> MobAction {
     if to[1] > 1.0 {
         let below = [pos[0].floor() as i32, (pos[1] + half[1] + 0.3).floor() as i32];
         if is_solid(ctx.world.get(below[0], below[1])) {
-            return MobAction { walk: 0.0, jump: false, mine: Some(below), leap: None };
+            return MobAction {
+                walk: 0.0,
+                jump: false,
+                mine: Some(below),
+                leap: None,
+            };
         }
     }
 
-    MobAction { walk, jump: to[1] < -0.5 && ctx.body.grounded, mine: None, leap: None }
+    MobAction {
+        walk,
+        jump: to[1] < -0.5 && ctx.body.grounded,
+        mine: None,
+        leap: None,
+    }
 }
 
 /// Runs every mob for one frame: think, move, then act on the world.
@@ -402,19 +456,17 @@ const GRACE: f32 = 10.0;
 
 impl Default for Spawner {
     fn default() -> Spawner {
-        Spawner { cap: 4, interval: 8.0, timer: GRACE, seed: 0x5EED }
+        Spawner {
+            cap: 4,
+            interval: 8.0,
+            timer: GRACE,
+            seed: 0x5EED,
+        }
     }
 }
 
 impl Spawner {
-    pub fn tick(
-        &mut self,
-        entities: &mut Entities,
-        world: &World,
-        view: TileRect,
-        player: [f32; 2],
-        dt: f32,
-    ) {
+    pub fn tick(&mut self, entities: &mut Entities, world: &World, view: TileRect, player: [f32; 2], dt: f32) {
         self.forget_distant(entities, player);
 
         self.timer -= dt;
@@ -449,9 +501,7 @@ impl Spawner {
         let gone: Vec<hecs::Entity> = entities
             .query::<(hecs::Entity, &Body)>()
             .iter()
-            .filter(|(_, body)| {
-                (body.pos[0] - player[0]).hypot(body.pos[1] - player[1]) > FORGET_DISTANCE
-            })
+            .filter(|(_, body)| (body.pos[0] - player[0]).hypot(body.pos[1] - player[1]) > FORGET_DISTANCE)
             .map(|(entity, _)| entity)
             .collect();
         for entity in gone {
@@ -525,13 +575,31 @@ mod tests {
     #[test]
     fn most_cubes_carry_a_bone_or_two_and_the_spawner_never_sends_the_digger() {
         let carried = (0..1000).filter_map(contents).collect::<Vec<_>>();
-        assert!((700..900).contains(&carried.len()), "{} of 1000 carry something", carried.len());
-        assert!(carried.iter().all(|c| c.item == Item::Bone && (1..=2).contains(&c.count)));
+        assert!(
+            (700..900).contains(&carried.len()),
+            "{} of 1000 carry something",
+            carried.len()
+        );
+        assert!(
+            carried
+                .iter()
+                .all(|c| c.item == Item::Bone && (1..=2).contains(&c.count))
+        );
 
         let world = flat_world();
         let mut entities = Entities::new();
-        let mut spawner = Spawner { cap: 200, interval: 0.0, timer: 0.0, ..Spawner::default() };
-        let view = TileRect { x0: 25, y0: 10, x1: 30, y1: 50 };
+        let mut spawner = Spawner {
+            cap: 200,
+            interval: 0.0,
+            timer: 0.0,
+            ..Spawner::default()
+        };
+        let view = TileRect {
+            x0: 25,
+            y0: 10,
+            x1: 30,
+            y1: 50,
+        };
         for _ in 0..400 {
             spawner.tick(&mut entities, &world, view, [27.0, 20.0], DT);
         }
@@ -558,8 +626,15 @@ mod tests {
     fn a_cube_waits_on_the_ground_then_leaps_without_steering() {
         let path = track([26.0, resting(GREEN_CUBE)], [0.0, 0.0], 3.0);
         let first_air = path.iter().position(|p| !p.3).expect("it leaps");
-        assert!(path[first_air].0 >= WAIT - 0.05, "left the ground after only {}s", path[first_air].0);
-        assert!(path[..first_air].iter().all(|p| (p.1 - 20.0).abs() < 1e-3), "it slides while waiting");
+        assert!(
+            path[first_air].0 >= WAIT - 0.05,
+            "left the ground after only {}s",
+            path[first_air].0
+        );
+        assert!(
+            path[..first_air].iter().all(|p| (p.1 - 20.0).abs() < 1e-3),
+            "it slides while waiting"
+        );
         // In the air it keeps a constant sideways speed: no steering.
         let air: Vec<_> = path[first_air..].iter().take_while(|p| !p.3).collect();
         let steps: Vec<f32> = air.windows(2).map(|w| w[1].1 - w[0].1).collect();
@@ -576,7 +651,10 @@ mod tests {
             path[first_air..].iter().find(|p| p.3).unwrap().1
         };
         assert!(landing(2.0) > landing(0.0) + 0.8, "a player running away should be led");
-        assert!(landing(-2.0) < landing(0.0) - 0.8, "and one running toward it met early");
+        assert!(
+            landing(-2.0) < landing(0.0) - 0.8,
+            "and one running toward it met early"
+        );
     }
 
     #[test]
@@ -609,7 +687,11 @@ mod tests {
         for _ in 0..600 {
             update(&mut entities, &mut world, player, [0.0, 0.0], &noise, DT);
         }
-        let body = *entities.query_mut::<&Body>().into_iter().next().expect("the mob exists");
+        let body = *entities
+            .query_mut::<&Body>()
+            .into_iter()
+            .next()
+            .expect("the mob exists");
         assert!(body.pos[0] > 30.0, "did not close the distance: x {}", body.pos[0]);
         assert!(
             body.pos[1] <= resting(GREEN_CUBE) + 0.01,
@@ -629,7 +711,11 @@ mod tests {
         for _ in 0..300 {
             update(&mut entities, &mut world, [40.0, start[1]], [0.0, 0.0], &noise, DT);
         }
-        let body = *entities.query_mut::<&Body>().into_iter().next().expect("the mob exists");
+        let body = *entities
+            .query_mut::<&Body>()
+            .into_iter()
+            .next()
+            .expect("the mob exists");
         assert!((body.pos[0] - start[0]).abs() < 0.5, "wandered to x {}", body.pos[0]);
     }
 
@@ -645,7 +731,11 @@ mod tests {
         for _ in 0..120 {
             update(&mut entities, &mut world, [40.0, start[1]], [0.0, 0.0], &far, DT);
         }
-        let body = *entities.query_mut::<&Body>().into_iter().next().expect("the mob exists");
+        let body = *entities
+            .query_mut::<&Body>()
+            .into_iter()
+            .next()
+            .expect("the mob exists");
         assert!((body.pos[0] - start[0]).abs() < 0.5, "chased a noise out of earshot");
 
         let mut near = NoiseLog::default();
@@ -653,7 +743,11 @@ mod tests {
         for _ in 0..300 {
             update(&mut entities, &mut world, [40.0, start[1]], [0.0, 0.0], &near, DT);
         }
-        let body = *entities.query_mut::<&Body>().into_iter().next().expect("the mob exists");
+        let body = *entities
+            .query_mut::<&Body>()
+            .into_iter()
+            .next()
+            .expect("the mob exists");
         assert!(body.pos[0] > 30.0, "did not investigate the noise: x {}", body.pos[0]);
     }
 
@@ -679,15 +773,28 @@ mod tests {
         let removed = (GROUND - 4..GROUND).filter(|y| world.get(25, *y) == AIR).count();
         assert!(removed >= 1, "never broke through the wall");
         assert!(removed <= 3, "dug {removed} tiles in two intervals; rate is unbounded");
-        assert!(world.chunk_revision(0, 0) > before, "mined tiles must rebuild their chunk");
+        assert!(
+            world.chunk_revision(0, 0) > before,
+            "mined tiles must rebuild their chunk"
+        );
     }
 
     #[test]
     fn the_spawner_respects_its_cap_and_places_mobs_outside_the_view_on_solid_ground() {
         let world = flat_world();
         let mut entities = Entities::new();
-        let mut spawner = Spawner { cap: 5, interval: 0.0, timer: 0.0, ..Spawner::default() };
-        let view = TileRect { x0: 25, y0: 10, x1: 45, y1: 50 };
+        let mut spawner = Spawner {
+            cap: 5,
+            interval: 0.0,
+            timer: 0.0,
+            ..Spawner::default()
+        };
+        let view = TileRect {
+            x0: 25,
+            y0: 10,
+            x1: 45,
+            y1: 50,
+        };
         let player = [35.0, resting(GREEN_CUBE)];
 
         for _ in 0..500 {
@@ -720,7 +827,18 @@ mod tests {
         assert_eq!(count(&entities), 1);
 
         let far_away = [20.0 + FORGET_DISTANCE + 10.0, resting(GREEN_CUBE)];
-        spawner.tick(&mut entities, &world, TileRect { x0: 0, y0: 0, x1: 1, y1: 1 }, far_away, DT);
+        spawner.tick(
+            &mut entities,
+            &world,
+            TileRect {
+                x0: 0,
+                y0: 0,
+                x1: 1,
+                y1: 1,
+            },
+            far_away,
+            DT,
+        );
         assert_eq!(count(&entities), 0, "a mob far from the player should be forgotten");
     }
 
@@ -739,7 +857,10 @@ mod tests {
         }
         assert_eq!(count(&entities), MOB_KINDS.len());
         for body in entities.query_mut::<&Body>() {
-            assert!(body.pos[0].is_finite() && body.pos[1].is_finite(), "{body:?} went non-finite");
+            assert!(
+                body.pos[0].is_finite() && body.pos[1].is_finite(),
+                "{body:?} went non-finite"
+            );
         }
     }
 }

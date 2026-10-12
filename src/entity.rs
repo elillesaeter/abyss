@@ -20,7 +20,12 @@ pub struct Body {
 
 impl Body {
     pub fn new(pos: [f32; 2], half: [f32; 2]) -> Body {
-        Body { pos, vel: [0.0, 0.0], half, grounded: false }
+        Body {
+            pos,
+            vel: [0.0, 0.0],
+            half,
+            grounded: false,
+        }
     }
 }
 
@@ -44,7 +49,11 @@ impl Sprite {
     /// A sprite of `half` extents standing on the same ground as a body of
     /// `body_half`, so extra height rises rather than sinking into the floor.
     pub fn standing_on(body_half: [f32; 2], half: [f32; 2], tint: [u8; 4]) -> Sprite {
-        Sprite { half, offset: [0.0, body_half[1] - half[1]], tint }
+        Sprite {
+            half,
+            offset: [0.0, body_half[1] - half[1]],
+            tint,
+        }
     }
 
     /// Top-left corner of the drawn quad for a body centred at `pos`.

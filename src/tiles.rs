@@ -38,12 +38,57 @@ pub struct TileType {
 pub const TILE_TYPES: &[TileType] = &[
     // Air's own material is the sky; the dark edge it casts on neighbours is a
     // separate material, since one is a surface and the other is a shadow.
-    TileType { name: "air",   solid: false, breakable: false, atlas_mat: 5, precedence: 255, color: [0, 0, 0, 0], light: [0.0; 3], drag: 1.0 },
-    TileType { name: "dirt",  solid: true,  breakable: true,  atlas_mat: MAT_DIRT, precedence: 2, color: [114, 79, 57, 255], light: [0.0; 3], drag: 1.0 },
-    TileType { name: "stone", solid: true,  breakable: true,  atlas_mat: MAT_STONE, precedence: 1, color: [92, 85, 91, 255], light: [0.0; 3], drag: 1.0 },
-    TileType { name: "torch", solid: false, breakable: false, atlas_mat: 6, precedence: 254, color: [250, 196, 120, 255], light: [1.0, 0.72, 0.38], drag: 1.0 },
+    TileType {
+        name: "air",
+        solid: false,
+        breakable: false,
+        atlas_mat: 5,
+        precedence: 255,
+        color: [0, 0, 0, 0],
+        light: [0.0; 3],
+        drag: 1.0,
+    },
+    TileType {
+        name: "dirt",
+        solid: true,
+        breakable: true,
+        atlas_mat: MAT_DIRT,
+        precedence: 2,
+        color: [114, 79, 57, 255],
+        light: [0.0; 3],
+        drag: 1.0,
+    },
+    TileType {
+        name: "stone",
+        solid: true,
+        breakable: true,
+        atlas_mat: MAT_STONE,
+        precedence: 1,
+        color: [92, 85, 91, 255],
+        light: [0.0; 3],
+        drag: 1.0,
+    },
+    TileType {
+        name: "torch",
+        solid: false,
+        breakable: false,
+        atlas_mat: 6,
+        precedence: 254,
+        color: [250, 196, 120, 255],
+        light: [1.0, 0.72, 0.38],
+        drag: 1.0,
+    },
     // No colour: the grid draws a trunk cell as the air behind it (see `drawn_as`).
-    TileType { name: "trunk", solid: false, breakable: true,  atlas_mat: 5, precedence: 255, color: [0, 0, 0, 0], light: [0.0; 3], drag: 1.0 },
+    TileType {
+        name: "trunk",
+        solid: false,
+        breakable: true,
+        atlas_mat: 5,
+        precedence: 255,
+        color: [0, 0, 0, 0],
+        light: [0.0; 3],
+        drag: 1.0,
+    },
 ];
 
 /// Growth living on a tile's exposed faces rather than replacing the tile. One bit
