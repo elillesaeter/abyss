@@ -85,6 +85,21 @@ pub fn supported(world: &World, pos: [f32; 2], half: [f32; 2]) -> bool {
     (y0..=y1).any(|y| (x0..=x1).any(|x| solid_at(world, x, y)))
 }
 
+/// How far the box would drop to land on ground at most a step below its feet,
+/// when it isn't standing on anything: what keeps a runner on the ground down a
+/// staircase instead of falling off every step.
+pub fn step_down(world: &World, pos: [f32; 2], half: [f32; 2]) -> Option<f32> {
+    if grounded(world, pos, half) {
+        return None;
+    }
+    let feet = pos[1] + half[1];
+    let (x0, x1) = covered(pos[0], half[0]);
+    let below = (feet + 2.0 * EPS).floor() as i32;
+    let row = (below..=(feet + STEP_HEIGHT).floor() as i32).find(|&y| (x0..=x1).any(|x| solid_at(world, x, y)))?;
+    let down = row as f32 - EPS - feet;
+    (down <= STEP_HEIGHT + EPS).then_some(down)
+}
+
 /// Moves a box by `vel * dt`, resolving x then y, zeroing velocity on contact.
 /// `may_step_up` should come from `supported` at the start of the frame.
 pub fn move_box(

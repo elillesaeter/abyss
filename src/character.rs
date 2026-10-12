@@ -150,7 +150,9 @@ fn pose(frame: u16) -> Pose {
         frames::RISE => (limb(-0.25, 0.5), limb(0.6, 1.2), limb(-0.6, 0.3), limb(2.3, 0.4)),
         // Flailing: arms up and out, one each way.
         frames::FALL => (limb(-0.3, 0.2), limb(0.3, 0.3), limb(-2.3, -0.2), limb(2.3, 0.2)),
-        f => return swing_pose(f.saturating_sub(frames::USE[0]) as f32 / (frames::USE.len() - 1) as f32),
+        f => {
+            return swing_pose(f.saturating_sub(frames::USE[0]) as f32 / (frames::USE.len() - 1) as f32);
+        }
     };
     Pose {
         back_leg,
@@ -184,6 +186,11 @@ fn swing_pose(arc: f32) -> Pose {
 /// The painted frame nearest `arc` along the swing.
 pub fn use_frame(arc: f32) -> u16 {
     frames::USE[(arc.clamp(0.0, 1.0) * (frames::USE.len() - 1) as f32).round() as usize]
+}
+
+/// Whole art pixels frame `frame` lowers the body by to stand on its feet.
+pub fn drop(frame: u16) -> i32 {
+    skeleton(&pose(frame)).drop
 }
 
 /// A pose turned into points in the frame, the body lowered until the lower

@@ -221,7 +221,11 @@ fn shade(in: VsOut) -> vec4<f32> {
     let edge = ragged(in);
     let local = floor(in.world * view.cell) - in.tile_px;
     let shifted = (in.mask_origin + clamp(local + edge.shift, vec2<f32>(0.0), vec2<f32>(view.cell - 1.0)) + 0.5) / view.atlas_size;
-    let mask_uv = select(in.mask_uv, shifted, (in.edges & EDGE_RAGGED) != 0u);
+    // Kept inside its own cell: where a quad's edge lands exactly on a pixel
+    // centre, rounding can otherwise read the neighbouring cell's edge row,
+    // which floats as a stray line just outside the shape.
+    let inside = clamp(in.mask_uv * view.atlas_size, in.mask_origin + 0.5, in.mask_origin + view.cell - 0.5) / view.atlas_size;
+    let mask_uv = select(inside, shifted, (in.edges & EDGE_RAGGED) != 0u);
     let coverage = textureSample(atlas, atlas_sampler, mask_uv).a * edge.keep;
     // Spread light (sky, bounce, torches) plus direct sun or moonlight, which has
     // its own finer texture over the same region so its shadows stay sharp.

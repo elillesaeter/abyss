@@ -743,3 +743,23 @@ swing = continuous eased arc 3.75 -> 0.35 rad, 12 painted frames,
 character::swing_hand gives the exact grip, combat sweeps the arc in small
 steps. Autoswing kept.
 Stage: done, committed (learner asked to commit after round 1b)
+
+## Canopy dash fix
+Black dashes above canopies: nearest-sampled mask UV at an exact pixel-centre
+edge read the neighbouring atlas cell's row. Fixed by clamping mask lookups
+inside their cell (shader.wgsl shade()). 180 tests pass.
+Stage: implemented, learner confirmed it looks better (not committed).
+
+## Smooth running: steps and swing-while-running
+Learner asks: feet stop when swinging while running; run anim flickers to
+fall on 1-tile drops; step-up too slow (STEP_DELAY 0.11 s blocks and zeroes
+x speed). Wants Terraria feel: no momentum loss up or down 1-tile steps,
+fast enough for future speed accessories (Hermes boots).
+Decided: no step-up delay (Terraria-like); snap down 1-tile drops while walking
+(glide sprite via negative step_lag); legs frame follows movement, upper body
+follows action (Frame.legs + upper_shift from character::drop); moonwalk always.
+Stage: implemented, 182 tests pass; awaiting in-game review (not committed).
+
+## Formatting
+Learner chose rustfmt, max_width 120 (rustfmt.toml). Committed separately as
+83032cc (format only). Run cargo fmt before each commit.

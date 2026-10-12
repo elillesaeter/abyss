@@ -39,14 +39,9 @@ pub const JUMP_SPEED: f32 = 21.5;
 /// Mining range from the player's centre, in tiles.
 pub const REACH: f32 = 5.5;
 
-/// How long the player must be pressed against a step before taking it. Without a
-/// wind-up a step fires the instant you touch it, which makes it hard to stand at
-/// the foot of one — to dig there, say — because walking into it lifts you straight
-/// on top.
-pub const STEP_DELAY: f32 = 0.11;
-/// How quickly the drawn position catches up after a step, per second. The step
-/// itself is instantaneous in collision terms; this is what stops it looking like
-/// a teleport.
+/// How quickly the drawn position catches up after a step up or down, per
+/// second. The step itself is instantaneous in collision terms, so running over
+/// steps costs no speed; this is what stops it looking like a teleport.
 const STEP_CATCH_UP: f32 = 16.0;
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -60,8 +55,6 @@ pub struct Player {
     pub pos: [f32; 2],
     pub vel: [f32; 2],
     pub grounded: bool,
-    /// How long the player has been pressed against a steppable obstruction.
-    step_press: f32,
     /// Remaining vertical lag, in tiles, between the drawn and actual position.
     step_lag: f32,
     /// 1 facing right, -1 left.
@@ -87,11 +80,24 @@ pub struct Player {
     spawn: [f32; 2],
 }
 
-/// Which frame to draw, and whether mirrored to face left.
+/// Which frames to draw, and whether mirrored to face left. The legs follow
+/// movement while the rest of the body follows any action, so a swing doesn't
+/// stop the run.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Frame {
+    /// The upper body: head, torso and arms.
     pub index: u16,
+    /// Trousers and shoes.
+    pub legs: u16,
     pub mirrored: bool,
+}
+
+impl Frame {
+    /// Art pixels the upper body moves down to sit on these legs: frames lower
+    /// the body by different amounts to stand on their feet.
+    pub fn upper_shift(&self) -> f32 {
+        (character::drop(self.legs) - character::drop(self.index)) as f32
+    }
 }
 
 impl Player {
@@ -100,7 +106,6 @@ impl Player {
             pos,
             vel: [0.0, 0.0],
             grounded: false,
-            step_press: 0.0,
             step_lag: 0.0,
             facing: 1.0,
             walked: 0.0,
@@ -134,7 +139,9 @@ impl Player {
         if self.using > 0.0 || self.is_dead() {
             return;
         }
-        let Some(item) = self.inventory.held() else { return };
+        let Some(item) = self.inventory.held() else {
+            return;
+        };
         if let Some(tile) = item.places() {
             if self.place(world, [at[0].floor() as i32, at[1].floor() as i32], tile) {
                 self.inventory.consume_held();
@@ -176,20 +183,24 @@ impl Player {
         }
     }
 
-    /// The frame for the player as it is: an action outranks being in the air,
-    /// which outranks walking.
+    /// The frames for the player as it is: the legs show being in the air,
+    /// walking or standing; the upper body shows an action over the same.
     pub fn frame(&self) -> Frame {
-        let index = if self.using > 0.0 {
-            character::use_frame(character::swing_arc(1.0 - self.using / self.use_time))
-        } else if !self.grounded {
+        let legs = if !self.grounded {
             if self.vel[1] < 0.0 { frames::RISE } else { frames::FALL }
         } else if self.vel[0].abs() > STILL {
             frames::WALK[(self.walked / STRIDE) as usize % frames::WALK.len()]
         } else {
             frames::IDLE
         };
+        let index = if self.using > 0.0 {
+            character::use_frame(character::swing_arc(1.0 - self.using / self.use_time))
+        } else {
+            legs
+        };
         Frame {
             index,
+            legs,
             mirrored: self.facing < 0.0,
         }
     }
@@ -224,21 +235,26 @@ impl Player {
         }
         self.vel[1] = (self.vel[1] + physics::GRAVITY * dt).min(physics::MAX_FALL * drag);
 
-        // Stepping needs ground under the body and a moment of intent; `supported`
-        // rather than `grounded` because the body may be a fraction of a tile up.
-        let may_step_up = physics::supported(world, self.pos, HALF) && self.step_press >= STEP_DELAY;
+        // Stepping up needs ground under the body; `supported` rather than
+        // `grounded` because the body may be a fraction of a tile up.
+        let may_step_up = physics::supported(world, self.pos, HALF);
+        let was_grounded = self.grounded;
         let contacts = physics::move_box(&mut self.pos, &mut self.vel, HALF, world, dt, may_step_up);
 
         if contacts.stepped_up {
-            self.step_press = 0.0;
             self.step_lag += physics::STEP_HEIGHT;
-        } else if contacts.step_available {
-            self.step_press += dt;
-        } else {
-            self.step_press = 0.0;
+        }
+        // Walking off a step down keeps to the ground rather than falling off it,
+        // unless jumping or thrown.
+        if was_grounded && self.vel[1] >= 0.0 && self.knocked <= 0.0 {
+            if let Some(down) = physics::step_down(world, self.pos, HALF) {
+                self.pos[1] += down;
+                self.vel[1] = 0.0;
+                self.step_lag -= down;
+            }
         }
         self.step_lag *= (-STEP_CATCH_UP * dt).exp();
-        if self.step_lag < 0.01 {
+        if self.step_lag.abs() < 0.01 {
             self.step_lag = 0.0;
         }
         self.grounded = physics::grounded(world, self.pos, HALF);
@@ -365,6 +381,7 @@ mod tests {
             player.frame(),
             Frame {
                 index: frames::IDLE,
+                legs: frames::IDLE,
                 mirrored: true
             }
         );
@@ -425,13 +442,8 @@ mod tests {
         let mut player = standing_player();
         walk(&mut player, &world, 1.0, 0.2);
         player.act_toward(player.pos[0] - 3.0, USE_TIME);
-        assert_eq!(
-            player.frame(),
-            Frame {
-                index: frames::USE[0],
-                mirrored: true
-            }
-        );
+        assert_eq!(player.frame().index, frames::USE[0]);
+        assert!(player.frame().mirrored);
         // Walking on doesn't turn it back mid-action, and the arm swings on...
         walk(&mut player, &world, 1.0, USE_TIME * 0.6);
         let mid = player.frame();
@@ -543,32 +555,62 @@ mod tests {
     }
 
     #[test]
-    fn a_step_waits_for_sustained_intent_then_takes_it() {
+    fn running_up_and_down_steps_keeps_full_speed_and_the_run() {
+        // A staircase: up one tile at 45, down one at 52.
         let mut world = flat_world();
-        for x in 45..64 {
+        for x in 45..52 {
             world.set(x, GROUND - 1, STONE);
         }
-        let mut player = Player::new([44.0, GROUND as f32 - HALF[1]]);
-        let walk = Intent { walk: 1.0, jump: false };
-
-        // A brief tap should leave the player at the foot of the step.
-        for _ in 0..((STEP_DELAY / DT) as i32 / 2) {
-            player.update(&world, walk, DT);
+        let mut player = Player::new([40.0, GROUND as f32 - HALF[1]]);
+        walk(&mut player, &world, 1.0, 0.1);
+        let mut top = false;
+        for _ in 0..((16.0 / WALK_SPEED) / DT) as i32 {
+            player.update(&world, Intent { walk: 1.0, jump: false }, DT);
+            assert!(player.grounded, "left the ground at x {}", player.pos[0]);
+            assert_eq!(player.vel[0], WALK_SPEED, "lost speed at x {}", player.pos[0]);
+            assert!(
+                frames::WALK.contains(&player.frame().legs),
+                "run broke at x {}",
+                player.pos[0]
+            );
+            top |= (player.pos[1] - (GROUND as f32 - 1.0 - HALF[1])).abs() < 0.01;
         }
+        assert!(top, "never climbed the step");
         assert!(
-            (player.pos[1] - (GROUND as f32 - HALF[1])).abs() < 0.01,
-            "stepped before the wind-up elapsed, at y {}",
-            player.pos[1]
+            player.pos[0] > 54.0 && (player.pos[1] - (GROUND as f32 - HALF[1])).abs() < 0.01,
+            "not back down"
         );
+    }
 
-        for _ in 0..60 {
-            player.update(&world, walk, DT);
+    #[test]
+    fn a_two_tile_drop_is_still_a_fall() {
+        let mut world = flat_world();
+        for x in 0..45 {
+            world.set(x, GROUND - 1, STONE);
+            world.set(x, GROUND - 2, STONE);
         }
+        let mut player = Player::new([43.0, GROUND as f32 - 2.0 - HALF[1]]);
+        let mut fell = false;
+        for _ in 0..30 {
+            player.update(&world, Intent { walk: 1.0, jump: false }, DT);
+            fell |= player.frame().legs == frames::FALL;
+        }
+        assert!(fell, "snapped down two tiles");
+    }
+
+    #[test]
+    fn swinging_while_running_keeps_the_legs_running() {
+        let world = flat_world();
+        let mut player = standing_player();
+        walk(&mut player, &world, 1.0, 0.2);
+        player.act_toward(player.pos[0] - 3.0, USE_TIME);
+        walk(&mut player, &world, 1.0, USE_TIME * 0.5);
+        let f = player.frame();
         assert!(
-            (player.pos[1] - (GROUND as f32 - 1.0 - HALF[1])).abs() < 0.01,
-            "never took the step, at y {}",
-            player.pos[1]
+            frames::USE.contains(&f.index) && frames::WALK.contains(&f.legs),
+            "{f:?}"
         );
+        assert!(f.mirrored, "faces the swing while running away: a moonwalk");
     }
 
     #[test]

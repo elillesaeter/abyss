@@ -11,7 +11,7 @@
 
 use crate::atlas::{self, DIRS, SOLID_MASK};
 use crate::atlas::{MAT_AIR_SHADOW, MAT_RIM, MAT_SKY, THIN_MASKS};
-use crate::character::{Appearance, PARTS, sprite_index};
+use crate::character::{Appearance, PARTS, Part, sprite_index};
 use crate::tiles::{AIR, DECOR_TYPES, STONE, TileId, atlas_mat, drawn_as, is_solid, precedence};
 use crate::world::World;
 
@@ -312,15 +312,20 @@ pub fn character(
     } else {
         (x - w * 0.5, w)
     };
-    PARTS.map(|part| Instance {
-        pos: [left, feet - h],
-        axis_x: [width, 0.0],
-        axis_y: [0.0, h],
-        mask: SOLID_MASK,
-        mat: sprite_index(part, frame.index),
-        tint: look.tint(part),
-        edges: SPRITE,
-        id,
+    let upper = frame.upper_shift() / atlas::CELL as f32;
+    PARTS.map(|part| {
+        let legs = matches!(part, Part::Trousers | Part::Shoes);
+        let (index, shift) = if legs { (frame.legs, 0.0) } else { (frame.index, upper) };
+        Instance {
+            pos: [left, feet - h + shift],
+            axis_x: [width, 0.0],
+            axis_y: [0.0, h],
+            mask: SOLID_MASK,
+            mat: sprite_index(part, index),
+            tint: look.tint(part),
+            edges: SPRITE,
+            id,
+        }
     })
 }
 
@@ -338,6 +343,7 @@ mod tests {
             20.0,
             Frame {
                 index: 3,
+                legs: 3,
                 mirrored: false,
             },
             &look,
@@ -348,6 +354,7 @@ mod tests {
             20.0,
             Frame {
                 index: 3,
+                legs: 3,
                 mirrored: true,
             },
             &look,

@@ -1039,7 +1039,9 @@ mod tests {
         let (mut freed, mut lowest, mut fastest) = (false, 0.0f32, 0.0f32);
         for _ in 0..600 {
             update(&mut world, 1.0 / 60.0);
-            let Some(f) = world.forest.falling.first() else { break };
+            let Some(f) = world.forest.falling.first() else {
+                break;
+            };
             freed |= f.phase == Phase::Free;
             lowest = lowest.max(f.foot[1]);
             fastest = fastest.max(f.speed());
@@ -1389,7 +1391,9 @@ mod tests {
             match phase {
                 Phase::Drop => assert_eq!(angle, 0.0),
                 Phase::Creep(_) => crept = true,
-                Phase::Hinged | Phase::Free => assert!(crept, "it went over without creeping first"),
+                Phase::Hinged | Phase::Free => {
+                    assert!(crept, "it went over without creeping first")
+                }
             }
             assert!(angle >= last, "the lean went back from {last} to {angle}");
             // Per-frame steps only grow, and gently: no jump at the hand-off.

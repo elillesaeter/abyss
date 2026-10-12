@@ -44,10 +44,11 @@ const POPUP_RISE: f32 = 2.0;
 fn frame_to_world(player: &Player, p: [f32; 2]) -> [f32; 2] {
     let at = player.visual_pos();
     let feet = at[1] + player::HALF[1];
-    let mirror = if player.frame().mirrored { -1.0 } else { 1.0 };
+    let frame = player.frame();
+    let mirror = if frame.mirrored { -1.0 } else { 1.0 };
     [
         at[0] + mirror * (p[0] - FRAME_W as f32 * 0.5) / CELL as f32,
-        feet + (p[1] - FRAME_H as f32) / CELL as f32,
+        feet + (p[1] + frame.upper_shift() - FRAME_H as f32) / CELL as f32,
     ]
 }
 
