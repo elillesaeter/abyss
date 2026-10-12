@@ -26,6 +26,10 @@ const MOON_SKY: [f32; 3] = [0.025, 0.03, 0.045];
 /// How long moonlight takes to fade in after dusk and out before dawn, as a share
 /// of the night.
 const MOON_FADE: f32 = 0.1;
+/// Morning mist gathers over the last stretch of the night and burns off this
+/// long after sunrise, both as shares of the cycle: about 8:00 it is gone.
+const MIST_GATHERS: f32 = 0.06;
+const MIST_LIFTS: f32 = 0.15;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Sky {
@@ -50,6 +54,8 @@ pub struct Lighting {
     pub moon: Option<f32>,
     /// Where the moon is in its cycle, 0..1: 0 new, 0.5 full.
     pub phase: f32,
+    /// How thick the morning mist lies in the valleys, 0..1.
+    pub mist: f32,
 }
 
 /// One point of the day's palette. Between keys, everything blends linearly.
@@ -135,6 +141,7 @@ impl Sky {
             sun: (t < DAYTIME).then_some(sun_angle),
             moon: (t >= DAYTIME).then_some(moon_angle),
             phase,
+            mist: smoothstep((t - (1.0 - MIST_GATHERS)) / MIST_GATHERS).max(1.0 - smoothstep(t / MIST_LIFTS)),
         }
     }
 }
@@ -170,6 +177,17 @@ pub fn luminance(c: [f32; 3]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mist_lies_thick_at_dawn_and_is_gone_by_mid_morning() {
+        let mist = |hour: f32| Sky::at(1, hour).lighting().mist;
+        assert!(mist(SUNRISE_HOUR) > 0.99, "thickest at sunrise");
+        assert!(mist(3.0) < mist(4.2) && mist(4.2) > 0.5, "it gathers before dawn");
+        assert!(mist(6.0) > 0.0 && mist(6.0) < mist(5.0), "it thins as the sun climbs");
+        for hour in [9.0, 12.0, 17.0, 22.0, 1.0] {
+            assert_eq!(mist(hour), 0.0, "no mist at {hour}:00");
+        }
+    }
 
     fn total(l: &Lighting) -> f32 {
         luminance(l.direct) + luminance(l.ambient)

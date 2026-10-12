@@ -600,3 +600,42 @@ wandering grooves, cracks across, bevel (lit top+left, shaded bottom, right left
 to the groove), 7% pits, knots with lit upper-left rim. First try (5-14 px plates,
 all four sides bevelled) read as brickwork.
 Stage: done, committed. Learner happy ("for procedurally generated textures that looks a lot better").
+
+## Atmosphere + backdrop refresh
+Pushed 93c179e first. Learner: atmosphere next (deferred: volumetric clouds, fog,
+cloud shadows on ground) + backdrop too basic/pixelated: sun, moon, sky gradient
+has too few steps.
+Diagnosed: backdrop.wgsl SKY_BANDS 8 hard bands over SKY_SPAN 48 tiles (deliberate
+"painted pixel art"); sun/moon drawn on the 16-px art grid, hard disc + two hard
+halo rings (1.6r, 2.6r); moon flat single colour; layers 3 flat shades each.
+Learner decided: 1 C (in between: smooth light, pixel shapes); 2 sun glow tinting
+sky (warmer/bigger low) + moon with maria/craters and soft terminator; 3 haze;
+4 clouds (lit tops, shaded undersides) + haze + morning mist; no proper fog, no
+cloud shadows.
+Implemented: smooth sky (pow 0.8) + horizon haze band + sRGB-space dither; sun
+at screen res with exp glow (wider when low) and warm sun-side sky at dawn/dusk;
+moon at screen res with soft terminator, value-noise maria, 5 fixed craters,
+halo by fullness, dark side = starless sky; foot haze per layer (mix to the sky
+behind, thickest at the foot); morning mist (Lighting.mist: gathers last 6% of
+night, gone by ~8:00) as drifting noise bands around treeline/hills bases, pale;
+clouds shaded cool underside -> lit top band following the silhouette, sun-facing
+edge brighter. First mist try filled everything below the treeline (no lower
+bound) and was too pink.
+Not unit-testable (shader): moon/sky banding checks done by screenshots only.
+Stage: implemented, 147 tests pass; awaiting learner review (not committed)
+Review: learner "stunning". Night fix approved & done: haze was baked on CPU
+toward the fixed daytime horizon then scaled by moonlight -> pale glowing
+mountains at night. Now shader: mix(shade*light, current sky_horizon, haze).
+BackdropSet.sky_horizon removed. Clouds still too bright at night (rework next).
+New request: cloud variation (size + shape), less opaque ("white sprites, not
+volumetric vapour").
+Learner: clustered like tree canopies, variable distance/shape/size; far = soft
+distant haze; cloud count to be driven by a weather system later (not yet).
+Implemented: Shape::Clouds{wisps, soft}; CPU cloud_plan (clusters, heaps/banks/
+wisps, sizes skewed small) + cloud_density (soft-union blobs, noise erosion,
+wraps) -> R8 texture 2048x(2x192), binding 2. Shader: manual bilinear vapour(),
+5 samples toward the light for self-shadow (exp(-0.35*sum)), alpha
+smoothstep(0,.9,d)*0.85, far layer sampled smoothly, near on art-pixel centres,
+dimmed by stars at night, haze toward current horizon. First pass: 95% coverage
+(gaps widened), cores too opaque, heap had a waist (rebuilt as dome).
+Stage: done, committed.

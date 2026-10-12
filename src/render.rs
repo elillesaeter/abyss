@@ -870,6 +870,31 @@ fn backdrop_resources(
         },
         size,
     );
+    let cloud_size = wgpu::Extent3d {
+        width: backdrop::STRIP as u32,
+        height: (backdrop::CLOUD_SLOTS * backdrop::CLOUD_PX) as u32,
+        depth_or_array_layers: 1,
+    };
+    let clouds = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("backdrop clouds"),
+        size: cloud_size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    queue.write_texture(
+        clouds.as_image_copy(),
+        &backdrop::FOREST.clouds(),
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(backdrop::STRIP as u32),
+            rows_per_image: Some(cloud_size.height),
+        },
+        cloud_size,
+    );
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("backdrop uniform"),
         size: size_of::<BackdropUniform>() as wgpu::BufferAddress,
@@ -899,15 +924,27 @@ fn backdrop_resources(
                 },
                 count: None,
             },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
         ],
     });
     let strips_view = strips.create_view(&Default::default());
+    let clouds_view = clouds.create_view(&Default::default());
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("backdrop bind group"),
         layout: &layout,
         entries: &[
             wgpu::BindGroupEntry { binding: 0, resource: buffer.as_entire_binding() },
             wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&strips_view) },
+            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&clouds_view) },
         ],
     });
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
