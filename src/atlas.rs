@@ -46,7 +46,11 @@ pub const FRAME_W: u32 = 40;
 pub const FRAME_H: u32 = 64;
 /// Frames per atlas row.
 pub const FRAME_COLS: u32 = WIDTH / FRAME_W;
-pub const HEIGHT: u32 = SPRITE_BAND_Y + crate::character::PARTS.len() as u32 * FRAME_H;
+/// Small sprites (`icons`) sit in a grid of square cells below the character.
+pub const ICON_BAND_Y: u32 = SPRITE_BAND_Y + crate::character::PARTS.len() as u32 * FRAME_H;
+pub const ICON: u32 = 16;
+pub const ICON_COLS: u32 = WIDTH / ICON;
+pub const HEIGHT: u32 = ICON_BAND_Y + crate::icons::ROWS * ICON;
 
 /// Material blocks, in order.
 /// The darkening an exposed edge casts on its neighbour, not a surface itself.

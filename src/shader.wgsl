@@ -54,6 +54,13 @@ const SPRITE: u32 = 64u;
 const SPRITE_BAND_Y: f32 = 656.0;
 const FRAME: vec2<f32> = vec2<f32>(40.0, 64.0);
 const FRAME_COLS: u32 = 32u;
+const UNLIT: u32 = 128u;
+const GLASS: u32 = 256u;
+const ICON: u32 = 512u;
+/// The icon grid: where it starts, its cell size, and cells per row.
+const ICON_BAND_Y: f32 = 1360.0;
+const ICON_CELL: f32 = 16.0;
+const ICON_COLS: u32 = 80u;
 /// How much brighter direct light makes the side of a trunk facing it, and darker
 /// the far side. Direct light only: in shadow there is no side to light.
 const SIDE_LIGHT: f32 = 0.3;
@@ -183,6 +190,12 @@ fn vs_main(
         let frame = vec2<f32>(0.0, SPRITE_BAND_Y) + vec2<f32>(f32(k % FRAME_COLS), f32(k / FRAME_COLS)) * FRAME;
         out.mat_uv = (frame + corner * FRAME) / view.atlas_size;
     }
+    if (instance_edges & ICON) != 0u {
+        let k = instance_cells.y;
+        let cells = vec2<f32>(f32((instance_edges >> 12u) & 15u), f32((instance_edges >> 16u) & 15u));
+        let first = vec2<f32>(f32(k % ICON_COLS), f32(k / ICON_COLS)) * ICON_CELL + vec2<f32>(0.0, ICON_BAND_Y);
+        out.mat_uv = (first + corner * cells * ICON_CELL) / view.atlas_size;
+    }
     out.mask_uv = (mask_origin + corner * view.cell) / view.atlas_size;
     out.tint = instance_tint;
     // Light is a tile-resolution texture over the visible region; sampling it by
@@ -214,7 +227,7 @@ fn shade(in: VsOut) -> vec4<f32> {
     // its own finer texture over the same region so its shadows stay sharp.
     let spread = textureSample(light_map, light_sampler, in.light_uv).rgb;
     let direct = view.direct.rgb * textureSample(sun_map, light_sampler, in.light_uv).r * (1.0 + SIDE_LIGHT * in.sunward);
-    let light = min(spread + direct, vec3<f32>(1.0));
+    let light = select(min(spread + direct, vec3<f32>(1.0)), vec3<f32>(1.0), (in.edges & UNLIT) != 0u);
     let rgba = material * in.tint;
     return vec4<f32>(rgba.rgb * light, rgba.a * coverage);
 }
@@ -224,7 +237,7 @@ fn shade(in: VsOut) -> vec4<f32> {
 @fragment
 fn fs_main(in: VsOut) -> FsOut {
     let colour = shade(in);
-    if colour.a < 0.5 {
+    if colour.a < select(0.5, 0.02, (in.edges & GLASS) != 0u) {
         discard;
     }
     return FsOut(colour, in.id);

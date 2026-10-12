@@ -46,6 +46,10 @@ pub const ID_BACKGROUND: u32 = 0;
 pub const ID_TERRAIN: u32 = 1;
 /// Trees, mobs and the player take ids from here up, in the order they are drawn.
 pub const FIRST_OBJECT_ID: u32 = 2;
+/// Set on an id whose pixels the outline pass leaves alone: small sprites that
+/// paint their own rim, which a drawn-in outline would swallow. It also makes the
+/// id larger than anything else's, so nothing outlines against it either.
+pub const NO_OUTLINE: u32 = 1 << 31;
 /// The edge breaks in short blocky runs, as stone does, rather than crumbling.
 pub const EDGE_BLOCKY: u32 = 1 << 4;
 /// Not an edge: a round piece of wood, lit a little more on the side facing the
@@ -54,6 +58,14 @@ pub const LIT_SIDE: u32 = 1 << 5;
 /// Not an edge: a character frame, its colour and shape taken straight from the
 /// sprite band. `mat` holds its index there (`character::sprite_index`).
 pub const SPRITE: u32 = 1 << 6;
+/// Not an edge: lit by nothing, for the interface and floating numbers.
+pub const UNLIT: u32 = 1 << 7;
+/// Not an edge: partly see-through. Kept where its alpha is above a sliver
+/// rather than half, and blended over what's behind.
+pub const GLASS: u32 = 1 << 8;
+/// Not an edge: a small sprite from the icon grid. `mat` is its first cell;
+/// bits 12-15 and 16-19 its width and height in cells.
+pub const ICON: u32 = 1 << 9;
 /// The four orthogonal neighbour bits: only those sides get bitten.
 const SIDES: u8 = 0b1111;
 
@@ -225,6 +237,13 @@ pub fn build_chunk(world: &World, cx: i32, cy: i32, out: &mut Layers) {
     }
 }
 
+
+/// A sprite from the icon grid on any quad: the axes span its whole block of
+/// cells, so they can rotate, mirror or squash it.
+pub fn icon(icon: crate::icons::Icon, pos: [f32; 2], axis_x: [f32; 2], axis_y: [f32; 2], tint: [u8; 4], flags: u32, id: u32) -> Instance {
+    let cells = (icon.cells[0] as u32) << 12 | (icon.cells[1] as u32) << 16;
+    Instance { pos, axis_x, axis_y, mask: SOLID_MASK, mat: icon.index, tint, edges: ICON | cells | flags, id }
+}
 
 /// The player and other sprites, until they have atlas cells of their own.
 pub fn tinted_box(pos: [f32; 2], size: [f32; 2], tint: [u8; 4], id: u32) -> Instance {

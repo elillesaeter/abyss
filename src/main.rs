@@ -3,7 +3,11 @@ mod autotile;
 mod backdrop;
 mod camera;
 mod character;
+mod combat;
+mod draw;
 mod entity;
+mod icons;
+mod items;
 mod light;
 mod mob;
 mod noise;
@@ -22,7 +26,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
@@ -109,6 +113,9 @@ struct App {
     camera: Camera,
     held: HashSet<KeyCode>,
     cursor: [f32; 2],
+    /// Held down, the left button keeps using the held item.
+    using_held: bool,
+    popups: Vec<combat::Popup>,
     /// `--zoom` from the command line, applied instead of fitting the default view.
     zoom_override: Option<usize>,
     last_frame: Instant,
@@ -139,6 +146,8 @@ impl App {
             zoom_override: zoom,
             held: HashSet::new(),
             cursor: [0.0, 0.0],
+            using_held: false,
+            popups: Vec::new(),
             last_frame: Instant::now(),
             frames_wanted: frames,
             started: Instant::now(),
@@ -199,24 +208,37 @@ impl ApplicationHandler for App {
             WindowEvent::CursorMoved { position, .. } => {
                 self.cursor = [position.x as f32, position.y as f32];
             }
-            WindowEvent::MouseInput { button, state: ElementState::Pressed, .. } => {
+            WindowEvent::MouseInput { button: MouseButton::Left, state, .. } => {
+                // Used each frame while held; see RedrawRequested.
+                self.using_held = state == ElementState::Pressed;
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let steps = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y,
+                    MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
+                };
+                if steps.abs() >= 1.0 {
+                    let selected = self.player.inventory.selected as i32;
+                    self.player.inventory.select(selected - steps.signum() as i32);
+                }
+            }
+            WindowEvent::MouseInput { button, state: ElementState::Pressed, .. } if !self.player.is_dead() => {
                 let tile = self.camera.px_to_tile(self.cursor);
                 let target = [tile[0].floor() as i32, tile[1].floor() as i32];
                 // Every swing shows, landed or not, turned toward the cursor.
-                if matches!(button, MouseButton::Left | MouseButton::Right) {
-                    self.player.act_toward(tile[0]);
+                if button == MouseButton::Right {
+                    self.player.act_toward(tile[0], player::USE_TIME);
                 }
                 match button {
-                    MouseButton::Left => {
+                    // ponytail: mining on right-click until the tool belt and
+                    // Shift smart cursor replace it.
+                    MouseButton::Right => {
                         if self.player.mine(&mut self.world, target) {
                             trees::after_cut(&mut self.world, target[0], target[1], self.player.pos[0]);
                             // Mining is the disturbance mobs react to.
                             self.noise
                                 .record([target[0] as f32 + 0.5, target[1] as f32 + 0.5]);
                         }
-                    }
-                    MouseButton::Right => {
-                        self.player.place(&mut self.world, target, tiles::TORCH);
                     }
                     _ => {}
                 }
@@ -237,6 +259,9 @@ impl ApplicationHandler for App {
                         .clamp_to_world(self.world.width(), self.world.height());
                 }
                 (code, ElementState::Pressed) => {
+                    if let Some(slot) = hotbar_key(code) {
+                        self.player.inventory.select(slot);
+                    }
                     self.held.insert(code);
                 }
                 (code, ElementState::Released) => {
@@ -252,6 +277,10 @@ impl ApplicationHandler for App {
                 trees::update(&mut self.world, dt);
                 let speed = if self.held.contains(&KeyCode::KeyT) { TIME_WARP } else { 1.0 };
                 self.world.sky.advance(dt * speed);
+                if self.using_held {
+                    let at = self.camera.px_to_tile(self.cursor);
+                    self.player.use_held(&mut self.world, at);
+                }
                 self.player.update(&self.world, intent, dt);
                 let view = self
                     .camera
@@ -262,9 +291,11 @@ impl ApplicationHandler for App {
                     &mut self.entities,
                     &mut self.world,
                     self.player.pos,
+                    self.player.vel,
                     &self.noise,
                     dt,
                 );
+                combat::update(&self.world, &mut self.player, &mut self.entities, &mut self.popups, dt);
                 self.camera.follow_smoothed(
                     self.player.visual_pos(),
                     dt,
@@ -282,6 +313,7 @@ impl ApplicationHandler for App {
                         &self.camera,
                         &self.player,
                         &self.entities,
+                        &self.popups,
                         &self.light,
                     );
                     if let Some(wanted) = self.frames_wanted {
@@ -321,6 +353,15 @@ impl ApplicationHandler for App {
     }
 }
 
+/// Number keys 1-9 then 0 pick hotbar slots left to right.
+fn hotbar_key(code: KeyCode) -> Option<i32> {
+    use KeyCode::*;
+    [Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9, Digit0]
+        .iter()
+        .position(|&k| k == code)
+        .map(|i| i as i32)
+}
+
 /// Renders one frame without a window and writes it to a PNG. Needed because a
 /// window launched from a terminal may never become visible, which makes the
 /// windowed path unverifiable, and useful for eyeballing changes.
@@ -351,15 +392,21 @@ fn screenshot(
     // shows them placed in the world rather than mid-fall.
     let mut entities = Entities::new();
     let mut log = NoiseLog::default();
-    for (offset, kind) in [(-9.0, mob::BOUNCER), (-5.0, mob::DIGGER), (6.0, mob::BOUNCER)] {
+    for (offset, kind) in [(-12.0, mob::GREEN_CUBE), (-7.0, mob::BLUE_CUBE), (10.0, mob::RED_CUBE)] {
         let x = player.pos[0] + offset;
         let surface = worldgen::surface_y(world.height(), seed, x as i32) as f32;
-        mob::spawn(&mut entities, kind, [x, surface - 3.0]);
+        mob::spawn(&mut entities, kind, [x, surface - 3.0], kind as u64);
     }
-    for _ in 0..90 {
-        mob::update(&mut entities, &mut world, player.pos, &log, 1.0 / 60.0);
+    for _ in 0..40 {
+        mob::update(&mut entities, &mut world, player.pos, player.vel, &log, 1.0 / 60.0);
         log.advance(1.0 / 60.0);
     }
+    // Mid-swing, with a damage number in the air, so a capture shows combat.
+    player.use_held(&mut world, [player.pos[0] + 5.0, player.pos[1]]);
+    for _ in 0..8 {
+        player.update(&world, Intent::default(), 1.0 / 60.0);
+    }
+    let popups = [combat::Popup { pos: [player.pos[0] + 3.0, player.pos[1] - 2.5], value: 20, age: 0.2, hurt_player: false }];
 
     // A tunnel into the hillside with a torch in it, so a capture shows what the
     // lighting actually does: daylight outside, darkness inside, warm light around
@@ -396,12 +443,12 @@ fn screenshot(
     let started = Instant::now();
     light.update(&world, lit, &world.sky.lighting());
     let light_time = started.elapsed();
-    renderer.render(&world, &camera, &player, &entities, &light);
+    renderer.render(&world, &camera, &player, &entities, &popups, &light);
     // A second frame, after mining, exercises cache invalidation in the capture too.
     let feet = [player.pos[0] as i32, (player.pos[1] + player::HALF[1]) as i32 + 1];
     player.mine(&mut world, feet);
     light.update(&world, lit, &world.sky.lighting());
-    renderer.render(&world, &camera, &player, &entities, &light);
+    renderer.render(&world, &camera, &player, &entities, &popups, &light);
 
     match renderer.save_capture(path) {
         Ok(()) => println!(

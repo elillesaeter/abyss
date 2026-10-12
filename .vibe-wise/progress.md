@@ -693,3 +693,53 @@ Learner chose 3.25 tiles. Implemented iteration 3: frame 40x64, HALF
 17 (thigh/shin 8.5), legs r4.0 thigh / r3.6 shin, STRIDE 0.65. No standing gap
 between legs (two 8 px legs don't fit apart under a 15 px torso).
 Learner approved (good for the world scale). Stage: done, committed
+
+## Combat + gel cubes
+Learner decided: sword swings in a Terraria-style arc (blade hits what it
+sweeps); hotbar + inventory, with pickaxe/axe in a separate tool belt used by
+a smart cursor (not taking hotbar slots); slimes hurt the player (contact
+damage, knockback, i-frames, hearts, respawn); hit feel = knockback + damage
+numbers (goo particles later, no particle system yet); slimes become
+translucent jelly CUBES (pseudo-3D top/side faces, pixel art, ref image of a
+green ooze cube with things inside), squash on impact, a few colours. Digger
+mob shelved (buggy at trees; should become a worm later) - stop spawning it.
+Learner answers: smart cursor = hold Shift, hovered tile picks the belt tool
+(block -> pickaxe, tree -> axe; walls/hammers later), release returns to the
+hotbar item (round 2). Cubes green 1.5 / blue 2 / red 2.5 tiles. Things inside
+cubes: bones by default (drop bone on death - bone = early crafting material
+for starter weapons), rarer ores/items. Numbers: 5 hearts, sword 1 heart,
+green 2 hits, red 5 hits, respawn 3 s.
+Left click uses the held item (confirmed).
+Implemented round 1: items.rs (Item, Inventory = 10-slot hotbar, starter kit),
+icons.rs (16-px icon grid band at atlas y 1360: 3 cube sizes, sword, icons,
+heart, slot, digits; small sprites bake their own rim), combat.rs (swept-arc
+sword hits once per swing id, knockback+stun, popups, contact damage, bursting
+into Drop entities, drop magnet + pickup), draw.rs (cubes GLASS with contents
+drawn first under the same id, sword between body and front hand, drops,
+popups, HUD in screen px via camera, scale = viewport_h/540). Shader flags
+UNLIT/GLASS/ICON; id flag NO_OUTLINE (bit 31) skips the outline pass. Player:
+health 100, hurt/knock/invulnerable blink/respawn 3 s at spawn, use_held,
+sword_out. Mobs: green/blue/red cube kinds (40/60/100 hp, 10/15/25 dmg),
+squash spring + stretch (area kept), contents 80% bones 1-2, digger never
+spawned. Input: left held = use, right = mine (ponytail until smart cursor),
+1-0 / wheel select.
+Stage: implemented, 176 tests pass; awaiting learner review in-game (not committed)
+Learner review (round 1): looks good, colours great. Cube 3D faces clash with
+the flat world -> make cubes plain 2D. Too many cubes. Too easy: cubes should
+leap like Terraria slimes (long calculated leaps, catching you when you jump
+over), and holding the use button while walking keeps them off. Weapon reach
+should come from weapon size. Swing must be smooth, not stepped.
+Learner answers: flat cubes yes; spawn count - not sure, must not overwhelm a
+new player (cubes are the only early mobs); leap AI yes; KEEP autoswing,
+weapons differ by use time; Terraria-style smooth wide swing; reach from
+sprite size; damage higher and by colour.
+Implemented round 1b: flat cube painter; Spawner cap 4 / 8 s / 10 s grace;
+leaper brain (pause 0.6-1.2 s with 0.3 s windup squash, launch aimed at
+player pos + vel * flight time, clamped to kind.speed 6/7/8, every 3rd leap
+x1.4 up x1.5 reach, idle hops beyond 30 tiles, no air steering); contact
+damage 15/25/40; Weapon stats in items.rs (STARTER_SWORD 20 dmg, 0.4 s,
+knockback 4.5) with reach measured from the painted sprite (icons::reach);
+swing = continuous eased arc 3.75 -> 0.35 rad, 12 painted frames,
+character::swing_hand gives the exact grip, combat sweeps the arc in small
+steps. Autoswing kept.
+Stage: done, committed (learner asked to commit after round 1b)

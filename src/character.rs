@@ -14,9 +14,10 @@ pub mod frames {
     pub const WALK: [u16; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
     pub const RISE: u16 = 9;
     pub const FALL: u16 = 10;
-    /// The arm swung from overhead down to forward: mining or placing.
-    pub const USE: [u16; 4] = [11, 12, 13, 14];
-    pub const COUNT: u16 = 15;
+    /// The arm swung from behind the head down to in front, sampled along the
+    /// arc: mining, placing, swinging.
+    pub const USE: [u16; 12] = [11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
+    pub const COUNT: u16 = 23;
 }
 
 /// The parts, each with its own row of frames in the atlas and its own colour.
@@ -132,7 +133,6 @@ struct Pose {
 }
 
 fn pose(frame: u16) -> Pose {
-    let stance = (limb(-0.2, 0.0), limb(0.25, 0.1));
     let (back_leg, front_leg, back_arm, front_arm) = match frame {
         frames::IDLE => (limb(-0.06, 0.0), limb(0.06, 0.0), limb(-0.08, 0.1), limb(0.08, 0.1)),
         f if frames::WALK.contains(&f) => {
@@ -150,13 +150,35 @@ fn pose(frame: u16) -> Pose {
         frames::RISE => (limb(-0.25, 0.5), limb(0.6, 1.2), limb(-0.6, 0.3), limb(2.3, 0.4)),
         // Flailing: arms up and out, one each way.
         frames::FALL => (limb(-0.3, 0.2), limb(0.3, 0.3), limb(-2.3, -0.2), limb(2.3, 0.2)),
-        f => {
-            let k = f.saturating_sub(frames::USE[0]) as usize;
-            let swing = [2.9, 2.2, 1.4, 0.7][k.min(3)];
-            (stance.0, stance.1, limb(-0.3, 0.2), limb(swing, 0.15))
-        }
+        f => return swing_pose(f.saturating_sub(frames::USE[0]) as f32 / (frames::USE.len() - 1) as f32),
     };
     Pose { back_leg, front_leg, back_arm, front_arm }
+}
+
+/// The swing's arc, as the front arm's angle from hanging down: from reaching
+/// back over the head to low in front of the feet.
+const SWING_FROM: f32 = 3.75;
+const SWING_TO: f32 = 0.35;
+
+/// How far along its arc a swing is, `t` of the way through its time: fast
+/// out of the wind-up, slowing into the follow-through.
+pub fn swing_arc(t: f32) -> f32 {
+    1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(2)
+}
+
+/// The pose `arc` of the way along the swing, feet planted.
+fn swing_pose(arc: f32) -> Pose {
+    Pose {
+        back_leg: limb(-0.2, 0.0),
+        front_leg: limb(0.25, 0.1),
+        back_arm: limb(-0.3, 0.2),
+        front_arm: limb(SWING_FROM + (SWING_TO - SWING_FROM) * arc, 0.15),
+    }
+}
+
+/// The painted frame nearest `arc` along the swing.
+pub fn use_frame(arc: f32) -> u16 {
+    frames::USE[(arc.clamp(0.0, 1.0) * (frames::USE.len() - 1) as f32).round() as usize]
 }
 
 /// A pose turned into points in the frame, the body lowered until the lower
@@ -347,6 +369,16 @@ fn hair(c: &mut Canvas, d: i32) {
     }
 }
 
+/// The near hand `arc` of the way along a swing, and the way the forearm
+/// points out of it: where a held weapon's grip sits and where it aims, exact
+/// between painted frames. Frame pixels, facing right.
+pub fn swing_hand(arc: f32) -> ([f32; 2], [f32; 2]) {
+    let [_, elbow, hand] = skeleton(&swing_pose(arc)).arms[1];
+    let d = [hand[0] - elbow[0], hand[1] - elbow[1]];
+    let len = d[0].hypot(d[1]).max(1e-6);
+    (hand, [d[0] / len, d[1] / len])
+}
+
 /// Paints every part of every frame into the atlas's sprite band.
 pub fn paint(px: &mut [u8]) {
     for frame in 0..frames::COUNT {
@@ -461,6 +493,26 @@ mod tests {
         assert_eq!(runs, 2, "the legs should part mid-stride: {xs:?}");
         let widest_gap = xs.windows(2).position(|w| w[1] != w[0] + 1).unwrap() + 1;
         assert!(widest_gap >= 7 && xs.len() - widest_gap >= 7, "legs are thick: {xs:?}");
+    }
+
+    #[test]
+    fn the_swing_arc_eases_out_and_its_frames_follow_it_without_jumps() {
+        assert_eq!(swing_arc(0.0), 0.0);
+        assert_eq!(swing_arc(1.0), 1.0);
+        assert!(swing_arc(0.5) > 0.7, "most of the arc goes by early");
+        // The hand moves a little between neighbouring frames, never a leap.
+        let hands: Vec<[f32; 2]> = (0..frames::USE.len())
+            .map(|k| swing_hand(k as f32 / (frames::USE.len() - 1) as f32).0)
+            .collect();
+        for w in hands.windows(2) {
+            assert!((w[1][0] - w[0][0]).hypot(w[1][1] - w[0][1]) < 3.5, "hand jumps between frames: {w:?}");
+        }
+        // It starts behind and above the shoulder and ends low in front.
+        let (start, end) = (swing_hand(0.0).0, swing_hand(1.0).0);
+        assert!(start[0] < SHOULDER[0] && start[1] < SHOULDER[1]);
+        assert!(end[0] > SHOULDER[0] && end[1] > SHOULDER[1]);
+        assert_eq!(use_frame(0.0), frames::USE[0]);
+        assert_eq!(use_frame(1.0), *frames::USE.last().unwrap());
     }
 
     #[test]

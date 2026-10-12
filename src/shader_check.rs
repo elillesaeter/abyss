@@ -39,6 +39,12 @@ mod tests {
                 crate::atlas::FRAME_H as f32
             ),
             &format!("const FRAME_COLS: u32 = {}u", crate::atlas::FRAME_COLS),
+            &format!("const UNLIT: u32 = {}u", crate::autotile::UNLIT),
+            &format!("const GLASS: u32 = {}u", crate::autotile::GLASS),
+            &format!("const ICON: u32 = {}u", crate::autotile::ICON),
+            &format!("const ICON_BAND_Y: f32 = {:.1}", crate::atlas::ICON_BAND_Y as f32),
+            &format!("const ICON_CELL: f32 = {:.1}", crate::atlas::ICON as f32),
+            &format!("const ICON_COLS: u32 = {}u", crate::atlas::ICON_COLS),
             "fn fs_soft",
             "@location(1) id: u32",
         ] {
@@ -56,6 +62,7 @@ mod tests {
             "@group(0) @binding(1) var ids: texture_2d<u32>",
             "@group(0) @binding(2) var<uniform> outline: Outline",
             &format!("const ID_TERRAIN: u32 = {}u", crate::autotile::ID_TERRAIN),
+            &format!("const NO_OUTLINE: u32 = {}u", crate::autotile::NO_OUTLINE),
         ] {
             assert!(OUTLINE.contains(needle), "outline.wgsl is missing `{needle}`");
         }

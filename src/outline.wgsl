@@ -19,6 +19,8 @@ struct Outline {
 
 /// All terrain shares this id (autotile's `ID_TERRAIN`).
 const ID_TERRAIN: u32 = 1u;
+/// An id flag: the pixel draws its own rim (autotile's `NO_OUTLINE`).
+const NO_OUTLINE: u32 = 2147483648u;
 
 /// Samples taken along each beam, and how far toward the sun they look, in tiles.
 const RAY_SAMPLES: i32 = 40;
@@ -53,6 +55,9 @@ fn fs_outline(@builtin(position) at: vec4<f32>) -> @location(0) vec4<f32> {
     let size = vec2<i32>(textureDimensions(ids));
     let mine = textureLoad(ids, p, 0).r;
     let w = outline.width;
+    if (mine & NO_OUTLINE) != 0u {
+        return textureLoad(scene, p, 0);
+    }
     if mine != 0u {
         for (var dy = -w; dy <= w; dy++) {
             for (var dx = -w; dx <= w; dx++) {

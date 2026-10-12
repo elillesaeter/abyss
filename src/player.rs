@@ -5,7 +5,8 @@
 //! code will drive mobs unchanged — that's what keeps a later move to an ECS a
 //! change of where positions live rather than a rewrite of how bodies move.
 
-use crate::character::{Appearance, frames};
+use crate::character::{self, Appearance, frames};
+use crate::items::{Inventory, Weapon};
 use crate::physics::{self, Contacts};
 use crate::tiles::{AIR, TileId, is_breakable, is_solid, tile_type};
 use crate::world::World;
@@ -17,8 +18,18 @@ pub const HALF: [f32; 2] = [0.625, 1.625];
 /// A walk frame per this many tiles walked, so feet keep pace with the ground:
 /// the eight-frame cycle covers two steps of about 2.6 tiles.
 pub const STRIDE: f32 = 0.65;
-/// How long an action's arm swing shows, in seconds.
-pub const USE_TIME: f32 = 0.25;
+/// How long mining and placing take, in seconds; weapons set their own.
+pub const USE_TIME: f32 = 0.3;
+
+/// Five hearts of twenty.
+pub const MAX_HEALTH: i32 = 100;
+pub const HEART: i32 = 20;
+/// After a hit: how long nothing can hurt again, and how long the knockback
+/// owns the player's movement.
+pub const HURT_TIME: f32 = 0.6;
+const KNOCK_TIME: f32 = 0.25;
+const KNOCK: [f32; 2] = [10.0, 9.0];
+pub const RESPAWN_TIME: f32 = 3.0;
 /// Slower than this counts as standing still, in tiles per second.
 const STILL: f32 = 0.5;
 
@@ -57,9 +68,23 @@ pub struct Player {
     pub facing: f32,
     /// Tiles walked on the ground, which the walk cycle steps through.
     walked: f32,
-    /// Time left showing an action.
+    /// Time left showing an action, out of how long it takes.
     using: f32,
+    use_time: f32,
     pub look: Appearance,
+    pub inventory: Inventory,
+    pub health: i32,
+    /// Time left untouchable after a hit.
+    pub invulnerable: f32,
+    /// Time left that a knockback overrides walking.
+    knocked: f32,
+    /// Time left before respawning; zero while alive.
+    pub dead_for: f32,
+    /// Counts sword swings, so a mob can tell it was already hit by this one.
+    pub swing: u32,
+    /// The weapon being swung, if the current action is a swing.
+    swung: Option<Weapon>,
+    spawn: [f32; 2],
 }
 
 /// Which frame to draw, and whether mirrored to face left.
@@ -71,13 +96,81 @@ pub struct Frame {
 
 impl Player {
     pub fn new(pos: [f32; 2]) -> Player {
-        Player { pos, vel: [0.0, 0.0], grounded: false, step_press: 0.0, step_lag: 0.0, facing: 1.0, walked: 0.0, using: 0.0, look: Appearance::default() }
+        Player {
+            pos,
+            vel: [0.0, 0.0],
+            grounded: false,
+            step_press: 0.0,
+            step_lag: 0.0,
+            facing: 1.0,
+            walked: 0.0,
+            using: 0.0,
+            use_time: USE_TIME,
+            look: Appearance::default(),
+            inventory: Inventory::starter(),
+            health: MAX_HEALTH,
+            invulnerable: 0.0,
+            knocked: 0.0,
+            dead_for: 0.0,
+            swing: 0,
+            swung: None,
+            spawn: pos,
+        }
+    }
+
+    pub fn is_dead(&self) -> bool {
+        self.dead_for > 0.0
+    }
+
+    /// The weapon mid-swing and how far along its arc, from 0 to 1.
+    pub fn wielded(&self) -> Option<(Weapon, f32)> {
+        let weapon = self.swung.filter(|_| self.using > 0.0)?;
+        Some((weapon, character::swing_arc(1.0 - self.using / self.use_time)))
+    }
+
+    /// Uses the held item toward world point `at`, unless still busy with the
+    /// last use: swings a sword, puts down a block.
+    pub fn use_held(&mut self, world: &mut World, at: [f32; 2]) {
+        if self.using > 0.0 || self.is_dead() {
+            return;
+        }
+        let Some(item) = self.inventory.held() else { return };
+        if let Some(tile) = item.places() {
+            if self.place(world, [at[0].floor() as i32, at[1].floor() as i32], tile) {
+                self.inventory.consume_held();
+                self.act_toward(at[0], USE_TIME);
+            }
+        } else if let Some(weapon) = item.weapon() {
+            self.swing += 1;
+            self.act_toward(at[0], weapon.use_time);
+            self.swung = Some(weapon);
+        }
+    }
+
+    /// Takes a hit from something at world x `from`: knocked away from it and
+    /// untouchable for a moment. False, and no effect, while untouchable.
+    pub fn hurt(&mut self, damage: i32, from: f32) -> bool {
+        if self.invulnerable > 0.0 || self.is_dead() {
+            return false;
+        }
+        self.health -= damage;
+        self.invulnerable = HURT_TIME;
+        self.knocked = KNOCK_TIME;
+        let away = if self.pos[0] >= from { 1.0 } else { -1.0 };
+        self.vel = [away * KNOCK[0], -KNOCK[1]];
+        if self.health <= 0 {
+            self.health = 0;
+            self.dead_for = RESPAWN_TIME;
+        }
+        true
     }
 
     /// Starts an action aimed at world x `x`: the player turns to face it while
     /// the arm moves.
-    pub fn act_toward(&mut self, x: f32) {
-        self.using = USE_TIME;
+    pub fn act_toward(&mut self, x: f32, time: f32) {
+        self.using = time;
+        self.use_time = time;
+        self.swung = None;
         if x != self.pos[0] {
             self.facing = (x - self.pos[0]).signum();
         }
@@ -87,8 +180,7 @@ impl Player {
     /// which outranks walking.
     pub fn frame(&self) -> Frame {
         let index = if self.using > 0.0 {
-            let k = ((1.0 - self.using / USE_TIME) * frames::USE.len() as f32) as usize;
-            frames::USE[k.min(frames::USE.len() - 1)]
+            character::use_frame(character::swing_arc(1.0 - self.using / self.use_time))
         } else if !self.grounded {
             if self.vel[1] < 0.0 { frames::RISE } else { frames::FALL }
         } else if self.vel[0].abs() > STILL {
@@ -104,12 +196,26 @@ impl Player {
         [self.pos[0], self.pos[1] + self.step_lag]
     }
 
-    pub fn update(&mut self, world: &World, intent: Intent, dt: f32) -> Contacts {
+    pub fn update(&mut self, world: &World, mut intent: Intent, dt: f32) -> Contacts {
+        if self.is_dead() {
+            self.dead_for -= dt;
+            if self.dead_for <= 0.0 {
+                self.respawn();
+            }
+            return Contacts::default();
+        }
+        self.invulnerable = (self.invulnerable - dt).max(0.0);
         // Grounded from the start of the frame: it gates both jumping and step-up.
         self.grounded = physics::grounded(world, self.pos, HALF);
         let drag = medium_drag(world, self.pos, HALF);
 
-        self.vel[0] = intent.walk * WALK_SPEED * drag;
+        if self.knocked > 0.0 {
+            // The knockback carries the player; walking and jumping wait.
+            self.knocked -= dt;
+            intent = Intent::default();
+        } else {
+            self.vel[0] = intent.walk * WALK_SPEED * drag;
+        }
         if intent.jump && self.grounded {
             self.vel[1] = -JUMP_SPEED;
         }
@@ -145,6 +251,11 @@ impl Player {
             self.walked += self.vel[0].abs() * dt;
         }
         contacts
+    }
+
+    fn respawn(&mut self) {
+        let (inventory, look, swing) = (std::mem::replace(&mut self.inventory, Inventory::starter()), self.look, self.swing);
+        *self = Player { inventory, look, swing, ..Player::new(self.spawn) };
     }
 
     /// Removes the breakable tile at `target` if it is within reach and no tree
@@ -292,11 +403,12 @@ mod tests {
         let world = flat_world();
         let mut player = standing_player();
         walk(&mut player, &world, 1.0, 0.2);
-        player.act_toward(player.pos[0] - 3.0);
+        player.act_toward(player.pos[0] - 3.0, USE_TIME);
         assert_eq!(player.frame(), Frame { index: frames::USE[0], mirrored: true });
         // Walking on doesn't turn it back mid-action, and the arm swings on...
         walk(&mut player, &world, 1.0, USE_TIME * 0.6);
-        assert_eq!(player.frame(), Frame { index: frames::USE[2], mirrored: true });
+        let mid = player.frame();
+        assert!(mid.mirrored && frames::USE[1..].contains(&mid.index), "{mid:?}");
         // ...but does once the action is over.
         walk(&mut player, &world, 1.0, USE_TIME);
         assert!(!player.frame().mirrored && frames::WALK.contains(&player.frame().index));

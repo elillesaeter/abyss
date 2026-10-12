@@ -19,10 +19,13 @@ use crate::atlas;
 use crate::autotile::{self, Instance};
 use crate::backdrop::{self, BackdropUniform};
 use crate::camera::Camera;
-use crate::entity::{Body, Entities, Sprite};
+use crate::entity::Entities;
 use crate::light::LightMap;
 use crate::sky;
 use crate::character;
+use crate::combat;
+use crate::draw;
+use crate::icons;
 use crate::player::{self, Player};
 use crate::trees;
 use crate::world::{CHUNK_SIZE, World};
@@ -214,6 +217,7 @@ impl Renderer {
 
         let (mut pixels, atlas_width, atlas_height) = atlas::load_or_generate();
         character::paint(&mut pixels);
+        icons::paint(&mut pixels);
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("tile atlas"),
             size: wgpu::Extent3d {
@@ -518,6 +522,7 @@ impl Renderer {
         camera: &Camera,
         player: &Player,
         entities: &Entities,
+        popups: &[combat::Popup],
         light: &LightMap,
     ) {
         let frame = match &self.target {
@@ -539,17 +544,25 @@ impl Renderer {
         let mut next_id = autotile::FIRST_OBJECT_ID;
         let view_tiles = camera.visible_tiles(world.width(), world.height());
         trees::emit(world, view_tiles, &mut next_id, &mut self.instances);
-        let drawn = player.visual_pos();
-        self.instances.extend(autotile::character(drawn[0], drawn[1] + player::HALF[1], player.frame(), &player.look, next_id));
-        for (body, sprite) in entities.query::<(&Body, &Sprite)>().iter() {
-            next_id += 1;
-            self.instances.push(autotile::tinted_box(
-                sprite.corner(body.pos),
-                sprite.size(),
-                sprite.tint,
-                next_id,
-            ));
+        // Hidden while dead, and blinking while untouchable after a hit.
+        let blink = (player.invulnerable * 12.0) as i32 % 2 == 1;
+        if !player.is_dead() && !blink {
+            let drawn = player.visual_pos();
+            let parts = autotile::character(drawn[0], drawn[1] + player::HALF[1], player.frame(), &player.look, next_id);
+            // The sword goes between the body and the near hand that grips it.
+            let hand = character::PARTS.iter().position(|&p| p == character::Part::FrontHand).expect("a front hand");
+            self.instances.extend(&parts[..hand]);
+            self.instances.extend(draw::sword(player, next_id));
+            self.instances.extend(&parts[hand..]);
         }
+        draw::mobs(entities, &mut next_id, &mut self.instances);
+        draw::drops(entities, &mut next_id, &mut self.instances);
+        draw::popups(popups, &mut next_id, &mut self.instances);
+        let viewport = match &self.target {
+            Target::Window { config, .. } => (config.width, config.height),
+            Target::Offscreen { size, .. } => *size,
+        };
+        draw::hud(player, camera, viewport, &mut next_id, &mut self.instances);
         self.assembly_time = started.elapsed();
         if self.assembly_time > self.peak_assembly {
             self.peak_assembly = self.assembly_time;
