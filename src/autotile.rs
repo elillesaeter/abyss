@@ -47,6 +47,9 @@ pub const ID_TERRAIN: u32 = 1;
 pub const FIRST_OBJECT_ID: u32 = 2;
 /// The edge breaks in short blocky runs, as stone does, rather than crumbling.
 pub const EDGE_BLOCKY: u32 = 1 << 4;
+/// Not an edge: a round piece of wood, lit a little more on the side facing the
+/// light. Its first axis runs across it.
+pub const LIT_SIDE: u32 = 1 << 5;
 /// The four orthogonal neighbour bits: only those sides get bitten.
 const SIDES: u8 = 0b1111;
 

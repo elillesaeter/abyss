@@ -10,15 +10,15 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 use std::ops::Range;
 
 use crate::atlas::{self, LEAF_MASK, LEAF_VARIANTS, MAT_BARK, MAT_LEAVES, SOLID_MASK};
-use crate::autotile::{Instance, textured};
+use crate::autotile::{ID_TERRAIN, Instance, LIT_SIDE, textured};
 use crate::camera::TileRect;
 use crate::physics::{self, GRAVITY, MAX_FALL};
 use crate::tiles::{AIR, TRUNK};
 use crate::world::World;
 use crate::worldgen::hash;
 
-pub const MIN_HEIGHT: i32 = 7;
-pub const MAX_HEIGHT: i32 = 20;
+pub const MIN_HEIGHT: i32 = 10;
+pub const MAX_HEIGHT: i32 = 28;
 /// Sideways sway at the crown in full wind, in tiles.
 const SWAY: f32 = 0.15;
 /// Trunks are drawn a little narrower than their cells, so they read as trunks
@@ -29,6 +29,9 @@ const TAPER: f32 = 0.3;
 /// Extra width on the bottom row, so the trunk meets the ground with a flare.
 const FLARE: f32 = 0.35;
 const BRANCH_THICKNESS: f32 = 0.26;
+const TWIG_THICKNESS: f32 = 0.19;
+/// How far along a branch it forks into two twigs.
+const FORK_AT: f32 = 0.6;
 /// How far the bottom row reaches down into the ground, in tiles: deeper than any
 /// bite in a ragged edge, so a trunk stands planted instead of hovering over one.
 const ROOT_SINK: f32 = 2.0 / 16.0;
@@ -80,6 +83,45 @@ struct Branch {
     angle: f32,
 }
 
+/// A root still to grow: which way it heads (radians below horizontal, outward
+/// on `side`), how thick it starts, how long it runs before forking, and how
+/// many more times it forks.
+#[derive(Clone, Copy)]
+struct Root {
+    side: f32,
+    angle: f32,
+    thick: f32,
+    len: f32,
+    depth: u32,
+    key: i64,
+}
+
+/// Roots are drawn in pieces this long, in tiles.
+const ROOT_STEP: f32 = 0.15;
+/// How much further down each piece turns than the one before, in radians.
+const ROOT_CURL: f32 = 0.06;
+/// The thinnest a root gets: one art pixel and a bit.
+const ROOT_TIP: f32 = 0.08;
+/// A root's rim: bark darkened to nearly the outline's black.
+const ROOT_RIM: [u8; 4] = [26, 24, 34, 255];
+
+/// One straight piece of wood besides the trunk: a branch's stem or twig, a root.
+#[derive(Clone, Copy)]
+struct Limb {
+    from: [f32; 2],
+    dir: [f32; 2],
+    len: f32,
+    thickness: f32,
+    /// Sways as this many trunk rows up.
+    h: f32,
+}
+
+impl Limb {
+    fn tip(&self) -> [f32; 2] {
+        [self.from[0] + self.dir[0] * self.len, self.from[1] + self.dir[1] * self.len]
+    }
+}
+
 impl Tree {
     pub fn row_y(&self, i: i32) -> i32 {
         self.ground - 1 - i
@@ -123,8 +165,87 @@ impl Tree {
         [self.centre() + b.side * half_w, self.row_y(b.row) as f32 + 0.5]
     }
 
-    fn branch_dir(b: &Branch) -> [f32; 2] {
-        [b.side * b.angle.cos(), -b.angle.sin()]
+    /// A branch as its stem and the two twigs it forks into: one turned up, the
+    /// other out and down, the upper one longer.
+    fn limbs(&self, b: &Branch) -> [Limb; 3] {
+        let dir = |angle: f32| [b.side * angle.cos(), -angle.sin()];
+        let h = b.row as f32 + 0.5;
+        let stem = Limb { from: self.branch_attach(b), dir: dir(b.angle), len: b.len * FORK_AT, thickness: BRANCH_THICKNESS, h };
+        let fork = stem.tip();
+        let spread = 0.3 + unit(self.seed, 30 + b.row as i64) * 0.25;
+        let twig = |turn: f32, share: f32| Limb { from: fork, dir: dir(b.angle + turn), len: b.len * share, thickness: TWIG_THICKNESS, h };
+        let (up, out) = (twig(spread, 0.6), twig(-spread, 0.45));
+        [stem, up, out]
+    }
+
+    /// Roots spreading from the foot of the trunk: a big one sweeping out each
+    /// side near the surface and one or two going down from under it, each
+    /// forking twice into fine tips. Drawn only with row 0, so they stay with
+    /// the stump.
+    fn roots(&self) -> Vec<Limb> {
+        let mut roots = Vec::new();
+        for (from, root) in self.root_starts() {
+            self.grow(from, root, &mut roots);
+        }
+        roots
+    }
+
+    /// Where each root leaves the trunk, and how it sets off.
+    fn root_starts(&self) -> Vec<([f32; 2], Root)> {
+        let half_w = self.width as f32 * TRUNK_FILL * 0.5;
+        let scale = 1.0 + (self.width - 1) as f32 * 0.3;
+        let top = self.ground as f32 - 0.2;
+        let mut starts = Vec::new();
+        for (k, side) in [(0, -1.0f32), (1, 1.0)] {
+            let r = |j: i64| unit(self.seed, 40 + k * 8 + j);
+            let from = [self.centre() + side * half_w * 0.6, top];
+            let root = Root { side, angle: 0.15 + r(0) * 0.2, thick: 0.6 * scale, len: (0.6 + r(1) * 0.25) * scale, depth: 2, key: k };
+            starts.push((from, root));
+        }
+        let down = 1 + (hash(self.seed, 48) % 2) as i64;
+        for k in 0..down {
+            let side = if (k + hash(self.seed, 49) as i64) % 2 == 0 { -1.0 } else { 1.0 };
+            let from = [self.centre() + side * half_w * 0.2, top + 0.1];
+            let angle = 1.0 + unit(self.seed, 50 + k) * 0.3;
+            let root = Root { side, angle, thick: 0.45 * scale, len: 0.45 * scale, depth: 2, key: 2 + k };
+            starts.push((from, root));
+        }
+        starts
+    }
+
+    /// Draws one root from `from` as a chain of short pieces, each thinner and
+    /// bent further down than the last, then forks it in two and grows each half.
+    fn grow(&self, mut from: [f32; 2], root: Root, out: &mut Vec<Limb>) {
+        let steps = (root.len / ROOT_STEP).ceil().max(1.0) as i32;
+        let end = (root.thick * 0.55).max(ROOT_TIP);
+        let mut angle = root.angle;
+        for i in 0..steps {
+            let t = i as f32 / steps as f32;
+            let thickness = root.thick + (end - root.thick) * t;
+            let dir = [root.side * angle.cos(), angle.sin()];
+            // Each piece reaches a little past the next one's start, so the bend
+            // between them leaves no notch.
+            let len = root.len / steps as f32;
+            out.push(Limb { from, dir, len: len + thickness * 0.3, thickness, h: 0.0 });
+            from = [from[0] + dir[0] * len, from[1] + dir[1] * len];
+            angle = (angle + ROOT_CURL).min(1.45);
+        }
+        if root.depth == 0 {
+            return;
+        }
+        let r = |j: i64| unit(self.seed, 60 + root.key * 16 + root.depth as i64 * 4 + j);
+        let spread = 0.35 + r(0) * 0.25;
+        let child = |turn: f32, share: f32, j: i64| Root {
+            angle: angle + turn,
+            thick: (end * 0.85).max(ROOT_TIP),
+            len: root.len * share,
+            depth: root.depth - 1,
+            key: root.key * 2 + j,
+            ..root
+        };
+        // One fork carries on outward, the other turns down and is shorter.
+        self.grow(from, child(-spread * 0.6, 0.85 + r(1) * 0.15, 0), out);
+        self.grow(from, child(spread, 0.65 + r(2) * 0.15, 1), out);
     }
 
     /// The masses of foliage on rows `rows`: the crown as 2-3 overlapping lobes
@@ -163,10 +284,10 @@ impl Tree {
             if !rows.contains(&b.row) {
                 continue;
             }
-            let (a, d) = (self.branch_attach(&b), Self::branch_dir(&b));
-            let r = 0.9 + b.len * 0.3;
-            let tip = [a[0] + d[0] * b.len, a[1] + d[1] * b.len];
-            clumps.push(Blob { centre: tip, radius: [r, r * 0.8], h: b.row as f32 + 0.5, front: true });
+            for twig in &self.limbs(&b)[1..] {
+                let r = 0.75 + twig.len * 0.45;
+                clumps.push(Blob { centre: twig.tip(), radius: [r, r * 0.8], h: twig.h, front: true });
+            }
         }
         back.into_iter().chain(clumps).chain(front).collect()
     }
@@ -266,7 +387,10 @@ impl Tree {
             ];
             let variant = ((density * 3.0 + r(2)).floor() as u16).min(LEAF_VARIANTS - 1);
             let snap = |v: f32| (v * atlas::CELL as f32).round() / atlas::CELL as f32;
-            let shade = 0.78 + 0.22 * r(3);
+            // Lit from above: the top of each clump bright, its underside in its own
+            // shade, with a little scatter so the gradient doesn't band.
+            let height = (((sy as f32 + 0.5) / sub - blob.centre[1]) / blob.radius[1]).clamp(-1.0, 1.0);
+            let shade = (1.0 - 0.3 * (height + 1.0) * 0.5) * (0.88 + 0.12 * r(3));
             let warm = 0.92 + 0.16 * r(4);
             out.push(Instance {
                 pos: [snap(centre[0] - 0.5), snap(centre[1] - 0.5)],
@@ -293,8 +417,15 @@ impl Tree {
         wind(clock) * SWAY * bend * (clock * 1.3 + phase).sin()
     }
 
-    /// Trunk and branch quads for rows `rows`, drawn where `cells` says a cell is
-    /// present. One object: branches join the trunk without a line between them.
+    /// Root, trunk and branch quads for rows `rows`, drawn where `cells` says a
+    /// cell is present. Trunk and branches are one object, joining without a
+    /// line between them.
+    ///
+    /// Roots count as ground, so the outline pass leaves them alone: it skips
+    /// edges with ground below, which would outline a root on top but not
+    /// underneath. Each root piece draws its own dark rim instead, all of them
+    /// before any bark so forks merge into one silhouette, and before the trunk
+    /// so it covers where they leave it.
     fn quads(
         &self,
         rows: Range<i32>,
@@ -303,6 +434,32 @@ impl Tree {
         id: u32,
         out: &mut Vec<Instance>,
     ) {
+        let limb = |limb: Limb, id: u32| {
+            let from = [limb.from[0] + sway(limb.h), limb.from[1]];
+            let normal = [-limb.dir[1], limb.dir[0]];
+            // Across first and along second, like a trunk row, so the bark's grain
+            // runs down the limb.
+            Instance {
+                pos: [from[0] - normal[0] * limb.thickness * 0.5, from[1] - normal[1] * limb.thickness * 0.5],
+                axis_x: [normal[0] * limb.thickness, normal[1] * limb.thickness],
+                axis_y: [limb.dir[0] * limb.len, limb.dir[1] * limb.len],
+                mask: SOLID_MASK,
+                mat: textured(MAT_BARK, [self.x, from[1].floor() as i32]),
+                tint: [255; 4],
+                edges: LIT_SIDE,
+                id,
+            }
+        };
+        if rows.contains(&0) && (0..self.width).any(|c| cells(0, c)) {
+            let roots = self.roots();
+            let px = 1.0 / atlas::CELL as f32;
+            for r in &roots {
+                let back = [r.from[0] - r.dir[0] * px, r.from[1] - r.dir[1] * px];
+                let rim = Limb { from: back, len: r.len + 2.0 * px, thickness: r.thickness + 2.0 * px, ..*r };
+                out.push(Instance { tint: ROOT_RIM, edges: 0, ..limb(rim, ID_TERRAIN) });
+            }
+            out.extend(roots.into_iter().map(|r| limb(r, ID_TERRAIN)));
+        }
         for i in rows.clone() {
             let present: Vec<i32> = (0..self.width).filter(|&c| cells(i, c)).collect();
             if present.is_empty() {
@@ -326,31 +483,14 @@ impl Tree {
                 mask: SOLID_MASK,
                 mat: textured(MAT_BARK, [self.x, self.row_y(i)]),
                 tint: [255; 4],
-                edges: 0,
+                edges: LIT_SIDE,
                 id,
             });
         }
         for b in self.branches() {
-            if !rows.contains(&b.row) || !(0..self.width).any(|c| cells(b.row, c)) {
-                continue;
+            if rows.contains(&b.row) && (0..self.width).any(|c| cells(b.row, c)) {
+                out.extend(self.limbs(&b).into_iter().map(|l| limb(l, id)));
             }
-            let attach = self.branch_attach(&b);
-            let attach = [attach[0] + sway(b.row as f32 + 0.5), attach[1]];
-            let dir = Self::branch_dir(&b);
-            let normal = [-dir[1], dir[0]];
-            out.push(Instance {
-                pos: [
-                    attach[0] - normal[0] * BRANCH_THICKNESS * 0.5,
-                    attach[1] - normal[1] * BRANCH_THICKNESS * 0.5,
-                ],
-                axis_x: [dir[0] * b.len, dir[1] * b.len],
-                axis_y: [normal[0] * BRANCH_THICKNESS, normal[1] * BRANCH_THICKNESS],
-                mask: SOLID_MASK,
-                mat: textured(MAT_BARK, [self.x, self.row_y(b.row)]),
-                tint: [255; 4],
-                edges: 0,
-                id,
-            });
         }
     }
 }
@@ -367,11 +507,20 @@ const TOPPLE_MIN_ROWS: i32 = 4;
 /// How far above a point terrain must start for the trunk's centreline to count as
 /// touching it. Keeps a foot resting exactly on a tile top from reading as buried.
 const CONTACT_SLACK: f32 = 0.02;
+/// Gravity on a toppling trunk, below the world's jump-tuned one, so the end of
+/// the fall doesn't whip. Tuned with the creep so a full-height tree is down in ~2 s.
+const TOPPLE_GRAVITY: f32 = 40.0;
+/// Before it goes, a cut trunk creeps over: easing from rest to this lean over
+/// this long, then falling on at the speed it reached.
+const CREEP: f32 = 0.4;
+const CREEP_LEAN: f32 = 0.09;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Phase {
     /// Dropping straight down onto whatever is under the cut.
     Drop,
+    /// Standing on the ground, starting to lean, for this many seconds so far.
+    Creep(f32),
     /// Tipping about its foot, faster as it leans.
     Hinged,
     /// Tipped past horizontal without landing — off a ledge — so it falls freely,
@@ -404,7 +553,7 @@ pub struct Falling {
 impl Falling {
     fn new(tree: Tree, from: i32, cells: Vec<[bool; 2]>, dir: f32) -> Falling {
         let foot = [tree.centre(), (tree.ground - from) as f32];
-        Falling { tree, from, cells, dir, phase: Phase::Drop, foot, vel: [0.0; 2], angle: 0.05, spin: 0.0 }
+        Falling { tree, from, cells, dir, phase: Phase::Drop, foot, vel: [0.0; 2], angle: 0.0, spin: 0.0 }
     }
 
     fn length(&self) -> f32 {
@@ -442,14 +591,23 @@ impl Falling {
                 if (0..self.tree.width).any(|c| physics::solid_at(world, self.tree.x + c, row)) {
                     // Snap the foot onto the top of the tile it reached.
                     self.foot[1] = row as f32;
-                    self.phase = Phase::Hinged;
+                    self.phase = Phase::Creep(0.0);
                     return self.topples();
                 }
                 self.foot[1] < world.height() as f32
             }
+            Phase::Creep(t) => {
+                // Eases in from rest (lean grows with t squared), then hands the
+                // hinge the speed it has reached, so the fall carries on unbroken.
+                let t = (t + dt).min(CREEP);
+                self.angle = CREEP_LEAN * (t / CREEP).powi(2);
+                self.spin = 2.0 * CREEP_LEAN * t / (CREEP * CREEP);
+                self.phase = if t < CREEP { Phase::Creep(t) } else { Phase::Hinged };
+                true
+            }
             Phase::Hinged => {
                 // A rod pivoting on its end: angular acceleration 3g/2L * sin(angle).
-                self.spin += 1.5 * GRAVITY / length * self.angle.sin() * dt;
+                self.spin += 1.5 * TOPPLE_GRAVITY / length * self.angle.sin() * dt;
                 self.angle += self.spin * dt;
                 // The first tile out from the foot is the ground it stands on.
                 if self.touches(world, 1.0) {
@@ -491,7 +649,7 @@ impl Falling {
         let spin = self.spin * self.length();
         match self.phase {
             Phase::Drop => self.vel[1].abs(),
-            Phase::Hinged => spin,
+            Phase::Creep(_) | Phase::Hinged => spin,
             Phase::Free => self.vel[0].hypot(self.vel[1]) + spin * 0.5,
         }
     }
@@ -735,15 +893,15 @@ mod tests {
     /// Steps a felled part until it breaks; returns whether it ever started to tip.
     fn tipped_before_breaking(world: &mut World) -> bool {
         let mut tipped = false;
-        for _ in 0..300 {
+        for _ in 0..400 {
             update(world, 1.0 / 60.0);
             let Some(f) = world.forest.falling.first() else { return tipped };
             if f.phase == Phase::Drop {
-                assert_eq!(f.angle, 0.05, "no tipping while it is still falling");
+                assert_eq!(f.angle, 0.0, "no tipping while it is still falling");
             } else {
                 assert_eq!(f.foot[1], GROUND as f32, "it rests on the ground, not mid-air");
-                assert_eq!(f.phase, Phase::Hinged, "on flat ground it never falls free");
-                tipped |= f.angle > 0.05;
+                assert_ne!(f.phase, Phase::Free, "on flat ground it never falls free");
+                tipped |= f.angle > CREEP_LEAN;
             }
         }
         panic!("never broke");
@@ -839,7 +997,7 @@ mod tests {
             let mut world = world_with_tree(1, 12);
             chop(&mut world, 0, base);
             assert_eq!(world.forest.falling.len(), 1);
-            for _ in 0..300 {
+            for _ in 0..400 {
                 update(&mut world, 1.0 / 60.0);
             }
             assert!(world.forest.falling.is_empty(), "cut at row {base} never landed");
@@ -854,18 +1012,22 @@ mod tests {
     }
 
     #[test]
-    fn a_tree_draws_one_quad_per_row_plus_its_branches_and_follows_cuts() {
+    fn a_tree_draws_one_quad_per_row_plus_its_limbs_and_follows_cuts() {
         let mut world = world_with_tree(1, 10);
-        let branches = world.forest.trees[0].branches().len();
+        let tree = world.forest.trees[0];
+        // A branch is a stem and two twigs.
+        let branches = tree.branches().len() * 3;
+        let roots = tree.roots().len();
         let view = TileRect { x0: 0, y0: 0, x1: 64, y1: 64 };
         let wood = |world: &World| {
             let mut out = Vec::new();
             emit(world, view, &mut FIRST_OBJECT_ID.clone(), &mut out);
             out.iter().filter(|q| q.mask == SOLID_MASK).count()
         };
-        assert_eq!(wood(&world), 10 + branches);
+        // Each root piece draws twice: its rim, then its bark.
+        assert_eq!(wood(&world), 10 + branches + 2 * roots);
         chop(&mut world, 0, 0);
-        assert_eq!(wood(&world), 9 + branches, "the toppling part still draws, minus the cut cell");
+        assert_eq!(wood(&world), 9 + branches, "the toppling part still draws, minus the cut cell and the roots");
     }
 
     fn foliage_cells(world: &World) -> usize {
@@ -881,10 +1043,12 @@ mod tests {
         let crown = foliage.keys().filter(|(_, sy)| (*sy as f32) < top).count();
         assert!(crown > 40, "only {crown} foliage cells above the top of the trunk");
         for b in tree.branches() {
-            let (a, d) = (tree.branch_attach(&b), Tree::branch_dir(&b));
-            let tip = [((a[0] + d[0] * b.len) * 2.0) as i32, ((a[1] + d[1] * b.len) * 2.0) as i32];
-            let near = foliage.keys().any(|&(sx, sy)| (sx - tip[0]).abs() <= 1 && (sy - tip[1]).abs() <= 1);
-            assert!(near, "no foliage at the tip of the branch on row {}", b.row);
+            for twig in &tree.limbs(&b)[1..] {
+                let t = twig.tip();
+                let tip = [(t[0] * 2.0) as i32, (t[1] * 2.0) as i32];
+                let near = foliage.keys().any(|&(sx, sy)| (sx - tip[0]).abs() <= 1 && (sy - tip[1]).abs() <= 1);
+                assert!(near, "no foliage at a twig tip of the branch on row {}", b.row);
+            }
         }
         let other = Tree { seed: 8, ..tree };
         assert_ne!(foliage.keys().collect::<Vec<_>>(), other.foliage(0..14).keys().collect::<Vec<_>>());
@@ -969,6 +1133,9 @@ mod tests {
         emit(&world, TileRect { x0: 0, y0: 0, x1: 64, y1: 64 }, &mut next_id, &mut out);
         assert_eq!(next_id - FIRST_OBJECT_ID, blobs.len() as u32 + 1, "one id per lobe, one for the wood");
 
+        let roots = out.iter().filter(|q| q.id == ID_TERRAIN).count();
+        assert_eq!(roots, 2 * tree.roots().len(), "roots draw as part of the ground, rims and bark");
+        out.retain(|q| q.id != ID_TERRAIN);
         let wood = out.iter().find(|q| q.mask == SOLID_MASK).unwrap().id;
         assert!(out.iter().filter(|q| q.mask == SOLID_MASK).all(|q| q.id == wood), "trunk and branches are one object");
         let backs = blobs.iter().filter(|b| !b.front).count() as u32;
@@ -984,8 +1151,105 @@ mod tests {
         let ground = world.forest.trees[0].ground as f32;
         let mut out = Vec::new();
         emit(&world, TileRect { x0: 0, y0: 0, x1: 64, y1: 64 }, &mut FIRST_OBJECT_ID.clone(), &mut out);
-        let base = out.iter().filter(|q| q.mask == SOLID_MASK).map(|q| q.pos[1] + q.axis_y[1]).fold(0.0, f32::max);
+        // Trunk rows are the upright wood; roots and branches are turned.
+        let trunk = out.iter().filter(|q| q.mask == SOLID_MASK && q.axis_x[1] == 0.0);
+        let base = trunk.map(|q| q.pos[1] + q.axis_y[1]).fold(0.0, f32::max);
         assert!((base - (ground + ROOT_SINK)).abs() < 1e-4, "the trunk reaches below the ground line, to {base}");
+    }
+
+    #[test]
+    fn a_tall_tree_takes_about_two_seconds_to_fall() {
+        let mut world = world_with_tree(1, MAX_HEIGHT);
+        chop(&mut world, 0, 0);
+        let dt = 1.0 / 60.0;
+        let mut t = 0.0;
+        while !world.forest.falling.is_empty() {
+            update(&mut world, dt);
+            t += dt;
+            assert!(t < 5.0, "never landed");
+        }
+        assert!((1.8..=2.2).contains(&t), "it took {t:.2} s");
+    }
+
+    #[test]
+    fn a_cut_trunk_eases_over_without_a_jolt_or_a_wobble() {
+        let mut world = world_with_tree(1, 14);
+        chop(&mut world, 0, 0);
+        let (mut crept, mut last, mut last_step) = (false, 0.0f32, 0.0f32);
+        while let Some(f) = world.forest.falling.first() {
+            let (phase, angle) = (f.phase, f.angle);
+            update(&mut world, 1.0 / 60.0);
+            match phase {
+                Phase::Drop => assert_eq!(angle, 0.0),
+                Phase::Creep(_) => crept = true,
+                Phase::Hinged | Phase::Free => assert!(crept, "it went over without creeping first"),
+            }
+            assert!(angle >= last, "the lean went back from {last} to {angle}");
+            // Per-frame steps only grow, and gently: no jump at the hand-off.
+            let step = angle - last;
+            assert!(step >= last_step - 1e-6 && step <= last_step * 1.5 + 0.004, "the lean jolted: {last_step} then {step}");
+            (last, last_step) = (angle, step);
+        }
+    }
+
+    #[test]
+    fn every_branch_forks_into_two_twigs_that_spread_apart() {
+        let tree = Tree { x: 10, ground: GROUND, width: 1, height: 20, full: 20, seed: 7 };
+        for b in tree.branches() {
+            let [stem, up, out] = tree.limbs(&b);
+            assert_eq!((up.from, out.from), (stem.tip(), stem.tip()), "both twigs leave from the stem's end");
+            assert!(up.tip()[1] < out.tip()[1], "one twig turns up, the other out");
+        }
+    }
+
+    /// Pieces of `limbs` that carry on from `l`'s end. A root piece overlaps the
+    /// next by a share of its thickness.
+    fn after<'a>(limbs: &'a [Limb], l: &Limb) -> impl Iterator<Item = &'a Limb> {
+        let tip = l.tip();
+        let slack = l.thickness * 0.3 + 0.005;
+        limbs.iter().filter(move |o| (o.from[0] - tip[0]).hypot(o.from[1] - tip[1]) < slack)
+    }
+
+    #[test]
+    fn roots_taper_fork_twice_and_stay_short() {
+        for (width, seed) in [(1, 7), (2, 9), (1, 31)] {
+            let tree = Tree { x: 10, ground: GROUND, width, height: 20, full: 20, seed };
+            let starts = tree.root_starts();
+            assert!(starts.len() >= 3, "one out each side and at least one down");
+            for (from, root) in starts {
+                let mut pieces = Vec::new();
+                tree.grow(from, root, &mut pieces);
+                for r in &pieces {
+                    assert!(r.thickness >= ROOT_TIP - 1e-6);
+                    for next in after(&pieces, r) {
+                        assert!(next.thickness <= r.thickness + 1e-6, "a root thickened along its length");
+                    }
+                    let [x, y] = r.tip();
+                    // Reach measured from the side of the trunk, so wide trees count fairly.
+                    let out = (x - tree.centre()).abs() - width as f32 * TRUNK_FILL * 0.5;
+                    assert!(out < 2.5 && y < GROUND as f32 + 2.5, "a root reaches too far, to ({x}, {y})");
+                }
+                // Ends: pieces nothing carries on from. Two forks make four.
+                let ends: Vec<&Limb> = pieces.iter().filter(|r| after(&pieces, r).next().is_none()).collect();
+                assert_eq!(ends.len(), 4, "a root should fork twice");
+                assert!(ends.iter().all(|r| r.tip()[1] > GROUND as f32), "every root ends in the ground");
+            }
+        }
+    }
+
+    #[test]
+    fn roots_stay_with_the_stump_not_the_falling_part() {
+        let mut world = world_with_tree(1, 14);
+        let roots = world.forest.trees[0].roots();
+        chop(&mut world, 0, 4);
+        let mut stump = Vec::new();
+        let tree = world.forest.trees[0];
+        tree.quads(0..tree.height, |i, c| tree.present(&world, i, c), &|_| 0.0, 0, &mut stump);
+        assert_eq!(stump.len(), 4 + 2 * roots.len() + 3 * tree.branches().iter().filter(|b| b.row < 4).count());
+        let mut fallen = Vec::new();
+        world.forest.falling[0].emit(&mut 0, &mut fallen);
+        let below = fallen.iter().filter(|q| q.mask == SOLID_MASK).any(|q| q.pos[1].max(q.pos[1] + q.axis_y[1]) > GROUND as f32);
+        assert!(!below, "the falling part carries no roots");
     }
 
     #[test]

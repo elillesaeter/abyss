@@ -547,7 +547,7 @@ Bug hit: new field placed before `id` broke attribute order (ids read edges ->
 terrain counted as background, god rays over ground). Learning point: vertex
 attribute order must match struct layout.
 Verified: 139 tests, noon close-up, carved underground pocket (bites veiled).
-Stage: implemented; awaiting learner review
+Stage: done, committed 196650f
 
 ### Ragged silhouettes, round 2
 Learner review: stone spot on; dirt/grass too busy; trees hover over bites.
@@ -557,4 +557,46 @@ feet blend into ground), learner chose this over a trees-only rule.
 Introduced: the outline as a depth rule ("edge where something meets what is
 behind it") and when that rule gives the wrong visual answer.
 Verified: 140 tests; close-ups of trunk base and player feet show no sole.
-Stage: implemented; awaiting learner review
+Stage: done, committed 196650f
+
+## Tree art pass + toppling feel
+Learner asked for the tree art pass, and raised two toppling issues: a snap of a
+few degrees before the fall starts, and the fall being too fast.
+Diagnosed: Falling::new starts at angle 0.05 rad (~3 deg) instantly (snap; set so
+the pendulum doesn't stall at 0); hinge uses world GRAVITY 45 tiles/s^2, tuned for
+jumping, about 2-3x "real" for a tree's size.
+Introduced: game gravity vs per-object time scale; a chop "nudge" (initial spin)
+instead of an initial angle.
+Learner decided: fall ~2 s with a brief creak; bark vertical with a few knots;
+lit slightly from the sun side; branches and roots fork; no varieties yet; all
+trees taller (mighty forest). Canopy style unanswered -> default: clumps lit on
+top, shaded underneath.
+Implemented: Creak phase (0.35 s dying wobble <=1 deg) then NUDGE 0.7 rad/s from
+upright; TOPPLE_GRAVITY 25 (python sim showed old 14-tall fall was already ~1.9 s;
+the felt "too fast" was the end whip, old end spin 3.05 rad/s vs now 2.4).
+Heights 10-28. Bark: wandering 1-px grooves + knots, periodic over the block
+(atlas cached in assets/tiles.png; regenerate with --gen-atlas). LIT_SIDE edge
+bit: direct light x(1 + 0.3 * facing) across the wood; sun x passed in direct.w.
+Branches = stem + 2 twigs each with a clump. Roots: 2-3 a side, two tapering
+pieces, some forked, drawn with ID_TERRAIN (first try was outlined dark bars
+inside the dirt; as "ground" they blend into dirt and outline against sky).
+Limb quads put the across axis first so grain runs along them.
+Stage: implemented, 144 tests pass; awaiting learner review (not committed)
+Review round 1 (learner): roots "look shit" — wants them like a reference
+illustration (thick flare from trunk, smooth tapering roots forking 2-3 levels
+into fine curling tips), just shorter. Creak wobble looks janky (it's ~4 Hz shake,
+~8 px at the crown of a tall tree).
+Learner chose A (outlined roots) + creep; said implement.
+Round 2 done: Creep phase eases lean 0->0.09 rad over 0.4 s (t^2), hands hinge
+the matching spin; TOPPLE_GRAVITY 40. Roots: root_starts (2 lateral, 1-2 down)
++ recursive grow(): chains of 0.15-tile pieces tapering, curling 0.06 rad/piece,
+forking twice. Outline pass couldn't outline them evenly (it skips edges with
+ground below, so roots were outlined on top only) -> roots keep ID_TERRAIN and
+draw their own 1-px dark rim (all rims first, then bark, so forks merge).
+Concept taught: shapes from chains of small pieces; self-drawn rims vs outline pass.
+Round 3 (learner: bark too flat vs pebbly terrain): bark now a 5-shade
+BARK_RAMP like dirt/stone; bark_shades() builds long narrow plates between
+wandering grooves, cracks across, bevel (lit top+left, shaded bottom, right left
+to the groove), 7% pits, knots with lit upper-left rim. First try (5-14 px plates,
+all four sides bevelled) read as brickwork.
+Stage: done, committed. Learner happy ("for procedurally generated textures that looks a lot better").

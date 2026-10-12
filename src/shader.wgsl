@@ -10,6 +10,8 @@ struct View {
     pad: f32,
     light_origin: vec2<f32>,
     light_size: vec2<f32>,
+    /// Direct light's colour, and in `w` the x of the unit vector toward it,
+    /// which is always above the horizon.
     direct: vec4<f32>,
 };
 
@@ -33,6 +35,8 @@ struct VsOut {
     @location(6) @interpolate(flat) tile_px: vec2<f32>,
     @location(7) @interpolate(flat) mask_origin: vec2<f32>,
     @location(8) @interpolate(flat) edges: u32,
+    /// How squarely a round surface faces the light here, -1..1; 0 for flat ones.
+    @location(9) sunward: f32,
 };
 
 /// Sides a tile can face air on, in `edges`' low bits, matching autotile's order.
@@ -41,6 +45,12 @@ const EDGE_E: u32 = 2u;
 const EDGE_S: u32 = 4u;
 const EDGE_W: u32 = 8u;
 const EDGE_BLOCKY: u32 = 16u;
+/// Every bit that bites a ragged edge.
+const EDGE_RAGGED: u32 = 31u;
+const LIT_SIDE: u32 = 32u;
+/// How much brighter direct light makes the side of a trunk facing it, and darker
+/// the far side. Direct light only: in shadow there is no side to light.
+const SIDE_LIGHT: f32 = 0.3;
 /// Stone breaks in runs this many art pixels wide.
 const BLOCK_RUN: f32 = 3.0;
 
@@ -79,7 +89,7 @@ struct Ragged {
 
 fn ragged(in: VsOut) -> Ragged {
     var out = Ragged(1.0, vec2<f32>(0.0));
-    if in.edges == 0u {
+    if (in.edges & EDGE_RAGGED) == 0u {
         return out;
     }
     let px = floor(in.world * view.cell);
@@ -172,6 +182,10 @@ fn vs_main(
     out.tile_px = instance_pos * view.cell;
     out.mask_origin = mask_origin;
     out.edges = instance_edges;
+    // Across the wood, from one side (-1) to the other (1), dotted with the light.
+    let toward = vec2<f32>(view.direct.w, -sqrt(max(1.0 - view.direct.w * view.direct.w, 0.0)));
+    let across = normalize(instance_axis_x + vec2<f32>(1e-6, 0.0)) * (corner.x * 2.0 - 1.0);
+    out.sunward = select(0.0, dot(across, toward), (instance_edges & LIT_SIDE) != 0u);
     return out;
 }
 
@@ -182,12 +196,12 @@ fn shade(in: VsOut) -> vec4<f32> {
     let edge = ragged(in);
     let local = floor(in.world * view.cell) - in.tile_px;
     let shifted = (in.mask_origin + clamp(local + edge.shift, vec2<f32>(0.0), vec2<f32>(view.cell - 1.0)) + 0.5) / view.atlas_size;
-    let mask_uv = select(in.mask_uv, shifted, in.edges != 0u);
+    let mask_uv = select(in.mask_uv, shifted, (in.edges & EDGE_RAGGED) != 0u);
     let coverage = textureSample(atlas, atlas_sampler, mask_uv).a * edge.keep;
     // Spread light (sky, bounce, torches) plus direct sun or moonlight, which has
     // its own finer texture over the same region so its shadows stay sharp.
     let spread = textureSample(light_map, light_sampler, in.light_uv).rgb;
-    let direct = view.direct.rgb * textureSample(sun_map, light_sampler, in.light_uv).r;
+    let direct = view.direct.rgb * textureSample(sun_map, light_sampler, in.light_uv).r * (1.0 + SIDE_LIGHT * in.sunward);
     let light = min(spread + direct, vec3<f32>(1.0));
     let rgba = material * in.tint;
     return vec4<f32>(rgba.rgb * light, rgba.a * coverage);

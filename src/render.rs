@@ -584,7 +584,7 @@ impl Renderer {
                 _pad: 0.0,
                 light_origin: [light.origin()[0] as f32, light.origin()[1] as f32],
                 light_size: [light.size()[0] as f32, light.size()[1] as f32],
-                direct: [lighting.direct[0], lighting.direct[1], lighting.direct[2], 1.0],
+                direct: [lighting.direct[0], lighting.direct[1], lighting.direct[2], lighting.toward[0]],
             }),
         );
 

@@ -30,6 +30,7 @@ mod tests {
             "@location(5) instance_id: u32",
             "@location(6) instance_edges: u32",
             &format!("const EDGE_BLOCKY: u32 = {}u", crate::autotile::EDGE_BLOCKY),
+            &format!("const LIT_SIDE: u32 = {}u", crate::autotile::LIT_SIDE),
             "fn fs_soft",
             "@location(1) id: u32",
         ] {

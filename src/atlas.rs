@@ -65,7 +65,6 @@ pub const MASK_COUNT: u16 = THIN_MASKS + 256;
 /// Open air. Drawn like any other tile so that unlit air reads as black rather
 /// than as whatever the frame was cleared to.
 pub const SKY_COLOR: [u8; 4] = [107, 153, 219, 255];
-pub const BARK_COLOR: [u8; 4] = [102, 74, 52, 255];
 pub const LEAVES_COLOR: [u8; 4] = [74, 128, 58, 255];
 
 /// How far a transition reaches into the tile, in pixels, before its fringe.
@@ -81,6 +80,7 @@ const THIN: f32 = 2.0;
 pub const DIRT_RAMP: [[u8; 3]; 5] = [[52, 34, 36], [84, 55, 45], [114, 79, 57], [143, 105, 73], [174, 136, 95]];
 pub const STONE_RAMP: [[u8; 3]; 5] = [[40, 37, 49], [64, 59, 71], [92, 85, 91], [121, 112, 109], [152, 141, 127]];
 pub const GRASS_RAMP: [[u8; 3]; 5] = [[48, 64, 40], [70, 94, 46], [96, 122, 54], [126, 148, 64], [160, 172, 84]];
+pub const BARK_RAMP: [[u8; 3]; 5] = [[46, 30, 28], [74, 50, 40], [102, 74, 52], [130, 98, 68], [160, 126, 88]];
 
 /// A pebbly material: stones of a ramp's lighter shades set in a matrix of its
 /// darker ones.
@@ -211,7 +211,7 @@ pub fn generate() -> Vec<u8> {
     material_texture(&mut px, MAT_WHITE, [255, 255, 255, 255]);
     // Flat: speckle reads as a surface, and sky is not one.
     flat_material(&mut px, MAT_SKY, SKY_COLOR);
-    bark_texture(&mut px, MAT_BARK, BARK_COLOR);
+    shade(&mut px, MAT_BARK, &BARK_RAMP, &bark_shades());
     material_texture(&mut px, MAT_LEAVES, LEAVES_COLOR);
 
     for mask in 0..MASK_COUNT {
@@ -356,18 +356,109 @@ fn material_texture(px: &mut [u8], mat: u16, color: [u8; 4]) {
     }
 }
 
-/// Bark runs along the trunk: streaks that change slowly downwards and quickly
-/// across, so the grain reads as vertical.
-fn bark_texture(px: &mut [u8], mat: u16, color: [u8; 4]) {
-    let (ox, oy) = material_block(mat);
-    for y in 0..BLOCK {
-        for x in 0..BLOCK {
-            let streak = (noise(mat as u32, x / 2, y / 10) - 0.5) * 34.0;
-            let speckle = (noise(mat as u32 ^ 0x33, x, y) - 0.5) * 10.0;
-            let rgb = [0, 1, 2].map(|c| (color[c] as f32 + streak + speckle).clamp(0.0, 255.0) as u8);
-            put(px, ox + x, oy + y, [rgb[0], rgb[1], rgb[2], color[3]]);
+/// Bark, as ramp indices: plates running down the trunk between wandering
+/// grooves, broken across by cracks, each plate bevelled like a pebble (lit on
+/// top and on the left, shaded underneath and on the right), pitted here and
+/// there, with a few knots. Wraps at the block edge both ways, so a trunk taller
+/// or wider than the block has no seam.
+fn bark_shades() -> Vec<u8> {
+    let size = BLOCK as i32;
+    let seed = MAT_BARK as u32 ^ 0xBA4C;
+    let at = |x: i32, y: i32| (y.rem_euclid(size) * size + x.rem_euclid(size)) as usize;
+    let period = std::f32::consts::TAU / BLOCK as f32;
+
+    // Grooves 4-6 pixels apart, the last gap closing the block.
+    let mut grooves = Vec::new();
+    let mut gx = 0;
+    while gx < size - 3 {
+        grooves.push((gx, noise(seed, gx as u32, 1) * 6.3));
+        gx += 4 + (noise(seed, gx as u32, 2) * 3.0) as i32;
+    }
+    let groove_at = |g: usize, y: i32| {
+        let (x, phase) = grooves[g];
+        let wander = (y as f32 * period * 2.0 + phase).sin() * 0.9 + (y as f32 * period * 5.0 + phase * 1.7).sin() * 0.5;
+        x + wander.round() as i32
+    };
+
+    // Which plate each pixel belongs to; -1 for grooves and cracks.
+    let mut ids = vec![-1i32; (BLOCK * BLOCK) as usize];
+    let mut bodies = Vec::new();
+    for g in 0..grooves.len() {
+        // Plates 12-30 pixels long down this strip, cracks between them: long
+        // and narrow, as bark splits, not brick-shaped.
+        let mut cracks = vec![0];
+        let mut y = 0;
+        loop {
+            y += 12 + (noise(seed ^ 0xC4, g as u32, y as u32) * 19.0) as i32;
+            if y > size - 8 {
+                break;
+            }
+            cracks.push(y);
+        }
+        for y in 0..size {
+            let plate = cracks.iter().rposition(|&c| c <= y).unwrap();
+            if cracks[plate] == y {
+                continue;
+            }
+            let id = (g * 64 + plate) as i32;
+            let (left, right) = (groove_at(g, y), groove_at((g + 1) % grooves.len(), y));
+            let right = if g + 1 == grooves.len() { right + size } else { right };
+            for x in left + 1..right {
+                ids[at(x, y)] = id;
+            }
+            if bodies.len() <= id as usize {
+                bodies.resize(id as usize + 1, 2);
+            }
+            let v = noise(seed ^ 0xB0, g as u32, plate as u32);
+            bodies[id as usize] = if v < 0.2 { 1 } else if v > 0.85 { 3 } else { 2 };
         }
     }
+
+    let mut shades = vec![0u8; ids.len()];
+    for y in 0..size {
+        for x in 0..size {
+            let me = ids[at(x, y)];
+            if me < 0 {
+                continue; // groove or crack: the darkest shade
+            }
+            let body = bodies[me as usize];
+            // Only the right side goes unshaded: the groove already darkens it,
+            // and shading it too would frame every plate like a brick.
+            let (up, down, left) = (ids[at(x, y - 1)], ids[at(x, y + 1)], ids[at(x - 1, y)]);
+            shades[at(x, y)] = if up != me || left != me {
+                (body + 1).min(4)
+            } else if down != me {
+                body - 1
+            } else if noise(seed ^ 0x917, x as u32, y as u32) < 0.07 {
+                body - 1 // a pit
+            } else {
+                body
+            };
+        }
+    }
+
+    // Knots: about one tile in three, kept inside the tile. A dark core, a shaded
+    // ring, and the ring's upper left catching the light.
+    for t in 0..BLOCK_TILES * BLOCK_TILES {
+        if noise(seed ^ 0x4B, t, 0) >= 0.33 {
+            continue;
+        }
+        let (tx, ty) = ((t % BLOCK_TILES) * CELL, (t / BLOCK_TILES) * CELL);
+        let c = [tx as f32 + 5.0 + noise(seed ^ 0x4C, t, 0) * 6.0, ty as f32 + 4.0 + noise(seed ^ 0x4D, t, 0) * 8.0];
+        for y in ty..ty + CELL {
+            for x in tx..tx + CELL {
+                let (dx, dy) = (x as f32 + 0.5 - c[0], y as f32 + 0.5 - c[1]);
+                let e = (dx / 1.6).powi(2) + (dy / 2.4).powi(2);
+                let i = at(x as i32, y as i32);
+                if e < 1.0 {
+                    shades[i] = 0;
+                } else if e < 2.6 {
+                    shades[i] = if dx + dy < 0.0 { 4 } else { 1 };
+                }
+            }
+        }
+    }
+    shades
 }
 
 fn mask_texture(px: &mut [u8], mask: u16) {
@@ -502,7 +593,7 @@ mod tests {
     #[test]
     fn rock_materials_keep_to_their_ramp() {
         let px = generate();
-        for (mat, ramp) in [(MAT_DIRT, DIRT_RAMP), (MAT_STONE, STONE_RAMP), (MAT_GRASS, GRASS_RAMP)] {
+        for (mat, ramp) in [(MAT_DIRT, DIRT_RAMP), (MAT_STONE, STONE_RAMP), (MAT_GRASS, GRASS_RAMP), (MAT_BARK, BARK_RAMP)] {
             let (ox, oy) = material_block(mat);
             let mut used = std::collections::HashSet::new();
             for y in 0..BLOCK {
@@ -516,6 +607,25 @@ mod tests {
             }
             assert!(used.len() >= 4, "material {mat} uses only {} shades", used.len());
         }
+    }
+
+    #[test]
+    fn bark_plates_are_lit_on_top_and_shaded_underneath() {
+        let shades = bark_shades();
+        let size = BLOCK as usize;
+        let mean = |row: &dyn Fn(usize, usize) -> bool| {
+            let picked: Vec<f32> = (1..size - 1)
+                .flat_map(|y| (0..size).map(move |x| (x, y)))
+                .filter(|&(x, y)| row(x, y))
+                .map(|(x, y)| shades[y * size + x] as f32)
+                .collect();
+            picked.iter().sum::<f32>() / picked.len() as f32
+        };
+        // Pixels just below a crack or groove versus just above one.
+        let dark = |x: usize, y: usize| shades[y * size + x] == 0;
+        let below = mean(&|x, y| !dark(x, y) && dark(x, y - 1));
+        let above = mean(&|x, y| !dark(x, y) && dark(x, y + 1));
+        assert!(below > above + 0.8, "plate tops {below:.2} should be well lighter than bottoms {above:.2}");
     }
 
     #[test]
