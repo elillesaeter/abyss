@@ -639,3 +639,57 @@ smoothstep(0,.9,d)*0.85, far layer sampled smoothly, near on art-pixel centres,
 dimmed by stars at night, haze toward current horizon. First pass: 95% coverage
 (gaps widened), cores too opaque, heap had a waist (rebuilt as dome).
 Stage: done, committed.
+
+## Character sprite + animation
+Learner supplied temp-assets/templateforchar.png (their template; licence to
+confirm before shipping). 288x256 = 9x8 frames of 32x32; figure ~16x22 px.
+Rows 0-1 face right, 2-3 front, 4-5 left, 6-7 back (top-down RPG template);
+side view uses rows 0-1 (+4-5 or mirroring). Row 0: idle, 4 walk, turn, arm-out
+(use) frames; row 1: crouch/jump-ish, lying, flying/swimming poses.
+Player today: flat-colour box 2x3 tiles (32x48 art px), hitbox 1.5x2.6.
+Key tension: 1:1 pixels -> figure ~1x1.4 tiles (half today's size, hitbox
+must shrink); 2x -> matches size but pixels twice the world's.
+Learner decided: 1:1 pixels (small hitbox), anims idle/walk/jump/use in that
+order, mirror for left, turn toward cursor on actions; sheet is a free itch.io
+placeholder, licence unchecked, never commercial.
+Implemented: sheet read at runtime from temp-assets (never baked into the
+committed assets/tiles.png), rows 0-1 copied into a 32-px sprite strip at atlas
+y 656; SPRITE edge bit makes the shader take colour+alpha from the frame (mat =
+frame index); mirroring = negative axis_x. HALF 0.375x0.65 (figure 12x21 px,
+feet 5 px above frame bottom). Player: facing, walked (distance, grounded only),
+using timer; frame() picks USE > RISE/FALL > WALK(by distance, STRIDE 0.35) >
+IDLE. Clicks call act_toward(cursor x). Box fallback if sheet missing.
+Learner review: figure far too small next to the world. Itch sheet dropped.
+
+## Generated paper-doll character
+Learner decided: option 1 (pixel frames painted by code at startup), ~3 tiles
+tall like Terraria, pixel art + smooth lighting, customisable skin/hair/eyes/
+clothing (character creation later), armour layers later.
+Proposed: 40x56 frames, 10 grayscale layers (back hand, back sleeve, body
+skin, pants, shoes, shirt, eyes, hair, front hand, front sleeve) tinted per
+instance by an Appearance; one Pose per frame drives every layer painter;
+15 frames (idle, 8 walk, rise, fall, 4 use); hitbox 1.25x2.75; itch sheet code
+removed.
+Implemented: src/character.rs (Part, PARTS, Appearance, Pose -> Skeleton, Canvas bar/block painters, paint() at startup into band at y 656, 10 rows x 40x56 frames, mat = row*32+frame); autotile::character returns 10 tinted instances sharing one id; HALF 0.625x1.375; STRIDE 0.3; itch sheet loader removed. Idle has no breathing bob (single frame).
+Stage: implemented, 160 tests pass; awaiting learner review in-game (not committed)
+Learner review (iteration 1): feet cycle too fast; arms straight forward when
+falling look odd; looks nothing like Terraria, far too skinny everywhere; looks
+small in the world. Wants fullscreen + closer zoom by default (always zooms in
+once and fullscreens). Cause of the framing: view is fitted to the 1280x720
+window at startup, fullscreen then keeps px/tile so ~25% more tiles show.
+Learner decided: 1:1 pixels with chunky Terraria proportions, Terraria eyes
+(white + iris), fullscreen + ~100 tile framing.
+Implemented iteration 2: head 16x15, torso 15 wide, legs r3.2 (6+6 long),
+sleeves r2.8, hands r2.4, fuller hair, EyeWhites part (always white, 11 parts),
+STRIDE 0.5, fall arms up/out. Camera remembers a fitted framing and refits on
+resize until zoomed by hand; DEFAULT_VIEW_TILES 100x58; borderless fullscreen
+at startup.
+Learner approved (good for the world scale). Stage: done, committed
+Learner review (iteration 2): much better; legs still too skinny; character
+feels short for the world - wants it a bit taller even if it needs a 4-tall
+gap. Idea for later: Terraria-style smart cursor for digging shafts.
+Learner chose 3.25 tiles. Implemented iteration 3: frame 40x64, HALF
+0.625x1.625 (needs a 4-tall gap), head unchanged, torso +3 (29..42), hip->ankle
+17 (thigh/shin 8.5), legs r4.0 thigh / r3.6 shin, STRIDE 0.65. No standing gap
+between legs (two 8 px legs don't fit apart under a 15 px torso).
+Learner approved (good for the world scale). Stage: done, committed

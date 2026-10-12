@@ -5,16 +5,22 @@
 //! code will drive mobs unchanged — that's what keeps a later move to an ECS a
 //! change of where positions live rather than a rewrite of how bodies move.
 
+use crate::character::{Appearance, frames};
 use crate::physics::{self, Contacts};
 use crate::tiles::{AIR, TileId, is_breakable, is_solid, tile_type};
 use crate::world::World;
 
-/// Half-extents in tiles: a 1.5 x 2.6 box on a 2x3 visual footprint, so there is
-/// slack inside a two-wide tunnel and tile seams can't wedge the player.
-pub const HALF: [f32; 2] = [0.75, 1.3];
-/// Drawn extents. Larger than the hitbox, as a character sprite always is: the
-/// body is what collides, this is what you see.
-pub const SPRITE_HALF: [f32; 2] = [1.0, 1.5];
+/// Half-extents in tiles: the painted figure, 20 x 52 art pixels, so what
+/// collides is what you see. It fits a tunnel two wide and four tall.
+pub const HALF: [f32; 2] = [0.625, 1.625];
+
+/// A walk frame per this many tiles walked, so feet keep pace with the ground:
+/// the eight-frame cycle covers two steps of about 2.6 tiles.
+pub const STRIDE: f32 = 0.65;
+/// How long an action's arm swing shows, in seconds.
+pub const USE_TIME: f32 = 0.25;
+/// Slower than this counts as standing still, in tiles per second.
+const STILL: f32 = 0.5;
 
 pub const WALK_SPEED: f32 = 9.0;
 /// v^2 / 2g with these values peaks a little over 5 tiles.
@@ -32,8 +38,6 @@ pub const STEP_DELAY: f32 = 0.11;
 /// a teleport.
 const STEP_CATCH_UP: f32 = 16.0;
 
-pub const COLOR: [u8; 4] = [226, 198, 160, 255];
-
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Intent {
     /// -1, 0 or 1.
@@ -49,11 +53,50 @@ pub struct Player {
     step_press: f32,
     /// Remaining vertical lag, in tiles, between the drawn and actual position.
     step_lag: f32,
+    /// 1 facing right, -1 left.
+    pub facing: f32,
+    /// Tiles walked on the ground, which the walk cycle steps through.
+    walked: f32,
+    /// Time left showing an action.
+    using: f32,
+    pub look: Appearance,
+}
+
+/// Which frame to draw, and whether mirrored to face left.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Frame {
+    pub index: u16,
+    pub mirrored: bool,
 }
 
 impl Player {
     pub fn new(pos: [f32; 2]) -> Player {
-        Player { pos, vel: [0.0, 0.0], grounded: false, step_press: 0.0, step_lag: 0.0 }
+        Player { pos, vel: [0.0, 0.0], grounded: false, step_press: 0.0, step_lag: 0.0, facing: 1.0, walked: 0.0, using: 0.0, look: Appearance::default() }
+    }
+
+    /// Starts an action aimed at world x `x`: the player turns to face it while
+    /// the arm moves.
+    pub fn act_toward(&mut self, x: f32) {
+        self.using = USE_TIME;
+        if x != self.pos[0] {
+            self.facing = (x - self.pos[0]).signum();
+        }
+    }
+
+    /// The frame for the player as it is: an action outranks being in the air,
+    /// which outranks walking.
+    pub fn frame(&self) -> Frame {
+        let index = if self.using > 0.0 {
+            let k = ((1.0 - self.using / USE_TIME) * frames::USE.len() as f32) as usize;
+            frames::USE[k.min(frames::USE.len() - 1)]
+        } else if !self.grounded {
+            if self.vel[1] < 0.0 { frames::RISE } else { frames::FALL }
+        } else if self.vel[0].abs() > STILL {
+            frames::WALK[(self.walked / STRIDE) as usize % frames::WALK.len()]
+        } else {
+            frames::IDLE
+        };
+        Frame { index, mirrored: self.facing < 0.0 }
     }
 
     /// Where the player is drawn: the true position plus the unspent step lag.
@@ -92,6 +135,15 @@ impl Player {
             self.step_lag = 0.0;
         }
         self.grounded = physics::grounded(world, self.pos, HALF);
+
+        self.using = (self.using - dt).max(0.0);
+        // Walking turns the player, except mid-action, when it faces its target.
+        if intent.walk != 0.0 && self.using == 0.0 {
+            self.facing = intent.walk.signum();
+        }
+        if self.grounded {
+            self.walked += self.vel[0].abs() * dt;
+        }
         contacts
     }
 
@@ -177,6 +229,82 @@ mod tests {
 
     fn standing_player() -> Player {
         Player::new([20.0, GROUND as f32 - HALF[1]])
+    }
+
+    fn walk(player: &mut Player, world: &World, walk: f32, seconds: f32) {
+        for _ in 0..(seconds / DT).round() as i32 {
+            player.update(world, Intent { walk, jump: false }, DT);
+        }
+    }
+
+    #[test]
+    fn standing_still_shows_the_idle_frame_facing_the_last_way_walked() {
+        let world = flat_world();
+        let mut player = standing_player();
+        walk(&mut player, &world, -1.0, 0.3);
+        walk(&mut player, &world, 0.0, 0.1);
+        assert_eq!(player.frame(), Frame { index: frames::IDLE, mirrored: true });
+    }
+
+    #[test]
+    fn the_walk_cycle_follows_distance_walked_not_time() {
+        let world = flat_world();
+        let mut player = standing_player();
+        let mut seen = Vec::new();
+        for _ in 0..60 {
+            player.update(&world, Intent { walk: 1.0, jump: false }, DT);
+            let f = player.frame();
+            assert!(frames::WALK.contains(&f.index) && !f.mirrored);
+            if seen.last() != Some(&f.index) {
+                seen.push(f.index);
+            }
+        }
+        // A second at walking speed is WALK_SPEED / STRIDE frame changes.
+        let expected = (WALK_SPEED / STRIDE).round() as usize;
+        assert!(seen.len().abs_diff(expected) <= 1, "{} frame changes, expected about {expected}", seen.len());
+        // In the mud, at half speed, the same distance takes the same frames.
+        let mut slow = standing_player();
+        let mut fast = standing_player();
+        for _ in 0..30 {
+            fast.update(&world, Intent { walk: 1.0, jump: false }, DT);
+        }
+        for _ in 0..60 {
+            slow.update(&world, Intent { walk: 0.5, jump: false }, DT);
+        }
+        assert_eq!(slow.frame().index, fast.frame().index, "the same distance shows the same frame");
+    }
+
+    #[test]
+    fn jumping_rises_then_falls_in_their_own_frames() {
+        let world = flat_world();
+        let mut player = standing_player();
+        player.update(&world, Intent { walk: 0.0, jump: true }, DT);
+        assert_eq!(player.frame().index, frames::RISE);
+        while player.vel[1] < 0.0 {
+            player.update(&world, Intent::default(), DT);
+        }
+        player.update(&world, Intent::default(), DT);
+        assert_eq!(player.frame().index, frames::FALL);
+    }
+
+    #[test]
+    fn an_action_turns_toward_its_target_and_plays_the_arm_frames() {
+        let world = flat_world();
+        let mut player = standing_player();
+        walk(&mut player, &world, 1.0, 0.2);
+        player.act_toward(player.pos[0] - 3.0);
+        assert_eq!(player.frame(), Frame { index: frames::USE[0], mirrored: true });
+        // Walking on doesn't turn it back mid-action, and the arm swings on...
+        walk(&mut player, &world, 1.0, USE_TIME * 0.6);
+        assert_eq!(player.frame(), Frame { index: frames::USE[2], mirrored: true });
+        // ...but does once the action is over.
+        walk(&mut player, &world, 1.0, USE_TIME);
+        assert!(!player.frame().mirrored && frames::WALK.contains(&player.frame().index));
+    }
+
+    #[test]
+    fn the_player_fits_a_two_wide_four_tall_tunnel_but_not_three() {
+        assert!(HALF[0] * 2.0 < 2.0 && HALF[1] * 2.0 < 4.0 && HALF[1] * 2.0 > 3.0);
     }
 
     #[test]

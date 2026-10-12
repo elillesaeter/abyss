@@ -22,6 +22,7 @@ use crate::camera::Camera;
 use crate::entity::{Body, Entities, Sprite};
 use crate::light::LightMap;
 use crate::sky;
+use crate::character;
 use crate::player::{self, Player};
 use crate::trees;
 use crate::world::{CHUNK_SIZE, World};
@@ -211,7 +212,8 @@ impl Renderer {
     ) -> Renderer {
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
 
-        let (pixels, atlas_width, atlas_height) = atlas::load_or_generate();
+        let (mut pixels, atlas_width, atlas_height) = atlas::load_or_generate();
+        character::paint(&mut pixels);
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("tile atlas"),
             size: wgpu::Extent3d {
@@ -537,15 +539,8 @@ impl Renderer {
         let mut next_id = autotile::FIRST_OBJECT_ID;
         let view_tiles = camera.visible_tiles(world.width(), world.height());
         trees::emit(world, view_tiles, &mut next_id, &mut self.instances);
-        let player_sprite =
-            Sprite::standing_on(player::HALF, player::SPRITE_HALF, player::COLOR);
         let drawn = player.visual_pos();
-        self.instances.push(autotile::tinted_box(
-            player_sprite.corner(drawn),
-            player_sprite.size(),
-            player_sprite.tint,
-            next_id,
-        ));
+        self.instances.extend(autotile::character(drawn[0], drawn[1] + player::HALF[1], player.frame(), &player.look, next_id));
         for (body, sprite) in entities.query::<(&Body, &Sprite)>().iter() {
             next_id += 1;
             self.instances.push(autotile::tinted_box(

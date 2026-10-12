@@ -31,6 +31,14 @@ mod tests {
             "@location(6) instance_edges: u32",
             &format!("const EDGE_BLOCKY: u32 = {}u", crate::autotile::EDGE_BLOCKY),
             &format!("const LIT_SIDE: u32 = {}u", crate::autotile::LIT_SIDE),
+            &format!("const SPRITE: u32 = {}u", crate::autotile::SPRITE),
+            &format!("const SPRITE_BAND_Y: f32 = {:.1}", crate::atlas::SPRITE_BAND_Y as f32),
+            &format!(
+                "const FRAME: vec2<f32> = vec2<f32>({:.1}, {:.1})",
+                crate::atlas::FRAME_W as f32,
+                crate::atlas::FRAME_H as f32
+            ),
+            &format!("const FRAME_COLS: u32 = {}u", crate::atlas::FRAME_COLS),
             "fn fs_soft",
             "@location(1) id: u32",
         ] {

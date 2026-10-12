@@ -12,6 +12,7 @@
 use crate::atlas::{self, DIRS, SOLID_MASK};
 use crate::tiles::{AIR, DECOR_TYPES, STONE, TileId, atlas_mat, drawn_as, is_solid, precedence};
 use crate::atlas::{MAT_AIR_SHADOW, MAT_RIM, MAT_SKY, THIN_MASKS};
+use crate::character::{Appearance, PARTS, sprite_index};
 use crate::world::World;
 
 #[repr(C)]
@@ -50,6 +51,9 @@ pub const EDGE_BLOCKY: u32 = 1 << 4;
 /// Not an edge: a round piece of wood, lit a little more on the side facing the
 /// light. Its first axis runs across it.
 pub const LIT_SIDE: u32 = 1 << 5;
+/// Not an edge: a character frame, its colour and shape taken straight from the
+/// sprite band. `mat` holds its index there (`character::sprite_index`).
+pub const SPRITE: u32 = 1 << 6;
 /// The four orthogonal neighbour bits: only those sides get bitten.
 const SIDES: u8 = 0b1111;
 
@@ -236,10 +240,49 @@ pub fn tinted_box(pos: [f32; 2], size: [f32; 2], tint: [u8; 4], id: u32) -> Inst
     }
 }
 
+/// A character standing with its soles at (`x`, `feet`): one quad per part,
+/// back to front, each tinted by the appearance. They share one id so the
+/// outline runs round the whole figure, not between its parts. Mirrored by
+/// running the x axis leftward from the right edge.
+pub fn character(x: f32, feet: f32, frame: crate::player::Frame, look: &Appearance, id: u32) -> [Instance; PARTS.len()] {
+    let (w, h) = (atlas::FRAME_W as f32 / atlas::CELL as f32, atlas::FRAME_H as f32 / atlas::CELL as f32);
+    let (left, width) = if frame.mirrored { (x + w * 0.5, -w) } else { (x - w * 0.5, w) };
+    PARTS.map(|part| Instance {
+        pos: [left, feet - h],
+        axis_x: [width, 0.0],
+        axis_y: [0.0, h],
+        mask: SOLID_MASK,
+        mat: sprite_index(part, frame.index),
+        tint: look.tint(part),
+        edges: SPRITE,
+        id,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tiles::{DECOR_GRASS, DIRT};
+
+    #[test]
+    fn a_character_stands_on_its_feet_and_mirrors_by_flipping_its_quads() {
+        use crate::player::Frame;
+        let look = Appearance::default();
+        let right = character(10.0, 20.0, Frame { index: 3, mirrored: false }, &look, 5);
+        let left = character(10.0, 20.0, Frame { index: 3, mirrored: true }, &look, 5);
+        for (r, l) in right.iter().zip(&left) {
+            assert_eq!((r.edges, r.id), (SPRITE, 5), "one id for the whole figure");
+            assert_eq!(r.mat, l.mat);
+            // Soles on the ground: the frame's bottom is the feet.
+            assert!((r.pos[1] + r.axis_y[1] - 20.0).abs() < 1e-5);
+            // Same footprint either way, centred on x; mirrored runs right to left.
+            assert_eq!(r.pos[0] + r.axis_x[0] * 0.5, 10.0);
+            assert_eq!(l.pos[0] + l.axis_x[0] * 0.5, 10.0);
+            assert!(r.axis_x[0] > 0.0 && l.axis_x[0] < 0.0);
+        }
+        assert_eq!(right[0].mat, sprite_index(PARTS[0], 3));
+        assert_eq!(right[7].tint, look.tint(PARTS[7]));
+    }
 
     const N: u16 = 1;
     const E: u16 = 1 << 1;

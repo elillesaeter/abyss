@@ -48,6 +48,12 @@ const EDGE_BLOCKY: u32 = 16u;
 /// Every bit that bites a ragged edge.
 const EDGE_RAGGED: u32 = 31u;
 const LIT_SIDE: u32 = 32u;
+const SPRITE: u32 = 64u;
+/// The character band: where it starts in the atlas, the frame size, and how
+/// many frames make an atlas row.
+const SPRITE_BAND_Y: f32 = 656.0;
+const FRAME: vec2<f32> = vec2<f32>(40.0, 64.0);
+const FRAME_COLS: u32 = 32u;
 /// How much brighter direct light makes the side of a trunk facing it, and darker
 /// the far side. Direct light only: in shadow there is no side to light.
 const SIDE_LIGHT: f32 = 0.3;
@@ -171,6 +177,12 @@ fn vs_main(
     var out: VsOut;
     out.clip = vec4<f32>(tile * view.scale + view.offset, 0.0, 1.0);
     out.mat_uv = (mat_origin + corner * view.cell) / view.atlas_size;
+    if (instance_edges & SPRITE) != 0u {
+        // A whole frame from the strip; its own alpha is its shape.
+        let k = instance_cells.y;
+        let frame = vec2<f32>(0.0, SPRITE_BAND_Y) + vec2<f32>(f32(k % FRAME_COLS), f32(k / FRAME_COLS)) * FRAME;
+        out.mat_uv = (frame + corner * FRAME) / view.atlas_size;
+    }
     out.mask_uv = (mask_origin + corner * view.cell) / view.atlas_size;
     out.tint = instance_tint;
     // Light is a tile-resolution texture over the visible region; sampling it by

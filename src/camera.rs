@@ -16,7 +16,7 @@ const DEFAULT_ZOOM: usize = 5;
 /// How much world the camera should show by default, in tiles. This is the framing
 /// that matters to play, and it is what stays constant across displays — pixels per
 /// tile is derived from it, not the other way round.
-pub const DEFAULT_VIEW_TILES: (f32, f32) = (120.0, 70.0);
+pub const DEFAULT_VIEW_TILES: (f32, f32) = (100.0, 58.0);
 
 /// Half-open tile rectangle: `x0..x1`, `y0..y1`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,11 +55,13 @@ pub struct Camera {
     zoom: usize,
     /// Viewport size in physical pixels.
     viewport: (u32, u32),
+    /// The framing a resize fits again, until the zoom is set by hand.
+    fit: Option<(f32, f32)>,
 }
 
 impl Camera {
     pub fn new(pos: [f32; 2], viewport: (u32, u32)) -> Camera {
-        Camera { pos, zoom: DEFAULT_ZOOM, viewport }
+        Camera { pos, zoom: DEFAULT_ZOOM, viewport, fit: None }
     }
 
     pub fn pixels_per_tile(&self) -> f32 {
@@ -69,13 +71,16 @@ impl Camera {
     /// Sets the zoom step directly, clamped. Used by the command line.
     pub fn set_zoom(&mut self, step: usize) {
         self.zoom = step.min(ZOOM_STEPS.len() - 1);
+        self.fit = None;
     }
 
     /// Picks the zoom step that frames closest to the requested number of tiles on
     /// the current viewport, so the same framing is reached on a 2560x1440 monitor
     /// and on a Retina panel. Both axes must fit, so the tighter constraint wins;
     /// the result is the nearest integer step, which may differ by a few tiles.
+    /// Resizes keep this framing, until the zoom is changed by hand.
     pub fn fit_view(&mut self, tiles_wide: f32, tiles_tall: f32) {
+        self.fit = Some((tiles_wide, tiles_tall));
         let ideal = (self.viewport.0 as f32 / tiles_wide).min(self.viewport.1 as f32 / tiles_tall);
         self.zoom = ZOOM_STEPS
             .iter()
@@ -95,15 +100,18 @@ impl Camera {
     }
 
     pub fn zoom_in(&mut self) {
-        self.zoom = (self.zoom + 1).min(ZOOM_STEPS.len() - 1);
+        self.set_zoom(self.zoom + 1);
     }
 
     pub fn zoom_out(&mut self) {
-        self.zoom = self.zoom.saturating_sub(1);
+        self.set_zoom(self.zoom.saturating_sub(1));
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
         self.viewport = (width.max(1), height.max(1));
+        if let Some((w, h)) = self.fit {
+            self.fit_view(w, h);
+        }
     }
 
     /// Integer pixel offset of the view centre within the viewport. Uses integer
@@ -312,6 +320,22 @@ mod tests {
                 "{viewport:?} framed {w:.0}x{h:.0} tiles, wanted {DEFAULT_VIEW_TILES:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_fitted_view_refits_on_resize_until_zoomed_by_hand() {
+        let mut cam = Camera::new([1000.0, 300.0], (1280, 720));
+        cam.fit_view(DEFAULT_VIEW_TILES.0, DEFAULT_VIEW_TILES.1);
+        let windowed = cam.pixels_per_tile();
+        // Going fullscreen keeps the framing, not the pixels per tile.
+        cam.resize(2560, 1440);
+        assert!(cam.pixels_per_tile() > windowed);
+        assert!((cam.view_tiles().0 - DEFAULT_VIEW_TILES.0).abs() < 15.0);
+        // Once zoomed by hand, the chosen zoom stays.
+        cam.zoom_in();
+        let chosen = cam.pixels_per_tile();
+        cam.resize(1280, 720);
+        assert_eq!(cam.pixels_per_tile(), chosen);
     }
 
     #[test]

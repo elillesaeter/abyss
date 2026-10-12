@@ -2,6 +2,7 @@ mod atlas;
 mod autotile;
 mod backdrop;
 mod camera;
+mod character;
 mod entity;
 mod light;
 mod mob;
@@ -161,7 +162,8 @@ impl ApplicationHandler for App {
         }
         let attrs = Window::default_attributes()
             .with_title("abyss")
-            .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
+            .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0))
+            .with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         let size = window.inner_size();
         self.camera.resize(size.width, size.height);
@@ -200,6 +202,10 @@ impl ApplicationHandler for App {
             WindowEvent::MouseInput { button, state: ElementState::Pressed, .. } => {
                 let tile = self.camera.px_to_tile(self.cursor);
                 let target = [tile[0].floor() as i32, tile[1].floor() as i32];
+                // Every swing shows, landed or not, turned toward the cursor.
+                if matches!(button, MouseButton::Left | MouseButton::Right) {
+                    self.player.act_toward(tile[0]);
+                }
                 match button {
                     MouseButton::Left => {
                         if self.player.mine(&mut self.world, target) {
