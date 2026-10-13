@@ -57,6 +57,7 @@ pub struct LightMap {
     /// What leaves each cell downstream, which is nothing for solid ground.
     through: Vec<f32>,
     sun_texels: Vec<u8>,
+    lamps: Vec<([i32; 2], [f32; 3])>,
 }
 
 impl LightMap {
@@ -102,6 +103,13 @@ impl LightMap {
             return [0.0; 3];
         }
         self.light[(j * self.size[0] + i) as usize]
+    }
+
+    /// Lights that aren't tiles, such as a torch in the hand: a tile and its
+    /// colour. Set before `update`.
+    pub fn set_lamps(&mut self, lamps: impl IntoIterator<Item = ([i32; 2], [f32; 3])>) {
+        self.lamps.clear();
+        self.lamps.extend(lamps);
     }
 
     pub fn update(&mut self, world: &World, view: TileRect, lighting: &Lighting) {
@@ -213,6 +221,15 @@ impl LightMap {
                     cell[c] += lighting.direct[c] * bounce;
                 }
                 let emitted = tile_type(id).light;
+                for c in 0..3 {
+                    cell[c] = cell[c].max(emitted[c]);
+                }
+            }
+        }
+        for &([x, y], emitted) in &self.lamps {
+            let (i, j) = (x - self.origin[0], y - self.origin[1]);
+            if i >= 0 && j >= 0 && i < self.size[0] && j < self.size[1] {
+                let cell = &mut self.light[(j * self.size[0] + i) as usize];
                 for c in 0..3 {
                     cell[c] = cell[c].max(emitted[c]);
                 }
@@ -414,6 +431,29 @@ mod tests {
         let far = lit(&map, 53, 55);
         assert!(near > 0.5, "the top of an open shaft should be bright, got {near}");
         assert!(far < near, "light should fade with depth: {far} vs {near}");
+    }
+
+    #[test]
+    fn a_lamp_lights_like_a_torch_tile() {
+        let cave = || {
+            let mut w = world();
+            for x in 50..60 {
+                for y in 80..86 {
+                    w.set(x, y, AIR);
+                }
+            }
+            w
+        };
+        let world = cave();
+        let mut tile = LightMap::default();
+        let mut world_with_torch = cave();
+        world_with_torch.set(55, 84, TORCH);
+        tile.update(&world_with_torch, view(), &day());
+        let mut lamp = LightMap::default();
+        lamp.set_lamps([([55, 84], tile_type(TORCH).light)]);
+        lamp.update(&world, view(), &day());
+        assert!(brightness(lamp.at(57, 84)) > 0.2);
+        assert_eq!(lamp.at(57, 84), tile.at(57, 84));
     }
 
     #[test]

@@ -6,9 +6,10 @@
 //! change of where positions live rather than a rewrite of how bodies move.
 
 use crate::character::{self, Appearance, frames};
-use crate::items::{Inventory, Weapon};
+use crate::items::{Inventory, Item, Weapon};
+use crate::mining;
 use crate::physics::{self, Contacts};
-use crate::tiles::{AIR, TileId, is_breakable, is_solid, tile_type};
+use crate::tiles::{AIR, TileId, is_solid, tile_type};
 use crate::world::World;
 
 /// Half-extents in tiles: the painted figure, 20 x 52 art pixels, so what
@@ -21,9 +22,7 @@ pub const STRIDE: f32 = 0.65;
 /// How long mining and placing take, in seconds; weapons set their own.
 pub const USE_TIME: f32 = 0.3;
 
-/// Five hearts of twenty.
 pub const MAX_HEALTH: i32 = 100;
-pub const HEART: i32 = 20;
 /// After a hit: how long nothing can hurt again, and how long the knockback
 /// owns the player's movement.
 pub const HURT_TIME: f32 = 0.6;
@@ -133,25 +132,56 @@ impl Player {
         Some((weapon, character::swing_arc(1.0 - self.using / self.use_time)))
     }
 
-    /// Uses the held item toward world point `at`, unless still busy with the
-    /// last use: swings a sword, puts down a block.
-    pub fn use_held(&mut self, world: &mut World, at: [f32; 2]) {
-        if self.using > 0.0 || self.is_dead() {
-            return;
+    /// Whether an action is still playing out.
+    pub fn busy(&self) -> bool {
+        self.using > 0.0
+    }
+
+    /// What the smart cursor picks for the tile at `target`: the tool that breaks
+    /// it, a torch for empty space against a block, or nothing, which leaves the
+    /// held item in charge. Nothing out of reach.
+    pub fn smart_item(&self, world: &World, target: [i32; 2]) -> Option<Item> {
+        if !self.can_reach(world, target) {
+            return None;
         }
-        let Some(item) = self.inventory.held() else {
-            return;
-        };
+        let id = world.get(target[0], target[1]);
+        if let Some(kind) = mining::tool_for(id) {
+            return self.inventory.tool(kind);
+        }
+        let against_block = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+            .iter()
+            .any(|d| is_solid(world.get(target[0] + d[0], target[1] + d[1])));
+        (id == AIR && against_block && self.inventory.has(Item::Torch)).then_some(Item::Torch)
+    }
+
+    /// Uses `item`, or the held item if none, toward world point `at`, unless
+    /// still busy with the last use: swings a weapon or tool, puts down a block
+    /// while any are left. Returns the tile a tool broke, if any.
+    pub fn use_held(&mut self, world: &mut World, at: [f32; 2], item: Option<Item>) -> Option<([i32; 2], TileId)> {
+        if self.busy() || self.is_dead() {
+            return None;
+        }
+        let target = [at[0].floor() as i32, at[1].floor() as i32];
+        let item = item.or(self.inventory.held())?;
         if let Some(tile) = item.places() {
-            if self.place(world, [at[0].floor() as i32, at[1].floor() as i32], tile) {
-                self.inventory.consume_held();
+            if !self.inventory.has(item) {
+                return None;
+            }
+            if self.place(world, target, tile) {
+                self.inventory.consume(item);
                 self.act_toward(at[0], USE_TIME);
             }
-        } else if let Some(weapon) = item.weapon() {
-            self.swing += 1;
-            self.act_toward(at[0], weapon.use_time);
-            self.swung = Some(weapon);
+            return None;
         }
+        let weapon = item.weapon()?;
+        self.swing += 1;
+        self.act_toward(at[0], weapon.use_time);
+        self.swung = Some(weapon);
+        let (kind, power) = item.tool()?;
+        if !self.can_reach(world, target) {
+            return None;
+        }
+        mining::hit(world, target, kind, power).map(|id| (target, id))
     }
 
     /// Takes a hit from something at world x `from`: knocked away from it and
@@ -284,19 +314,6 @@ impl Player {
         };
     }
 
-    /// Removes the breakable tile at `target` if it is within reach and no tree
-    /// stands on it. Returns whether anything was mined.
-    pub fn mine(&self, world: &mut World, target: [i32; 2]) -> bool {
-        if !self.can_reach(world, target)
-            || !is_breakable(world.get(target[0], target[1]))
-            || world.forest.anchors(target[0], target[1])
-        {
-            return false;
-        }
-        world.set(target[0], target[1], AIR);
-        true
-    }
-
     /// Puts a tile into empty space within reach, and not inside the player's own
     /// box — walling yourself into a solid tile would be unrecoverable.
     pub fn place(&self, world: &mut World, target: [i32; 2], id: TileId) -> bool {
@@ -346,7 +363,7 @@ pub fn medium_drag(world: &World, pos: [f32; 2], half: [f32; 2]) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tiles::STONE;
+    use crate::tiles::{STONE, TRUNK};
 
     const GROUND: i32 = 32;
     const DT: f32 = 1.0 / 60.0;
@@ -458,14 +475,110 @@ mod tests {
         assert!(HALF[0] * 2.0 < 2.0 && HALF[1] * 2.0 < 4.0 && HALF[1] * 2.0 > 3.0);
     }
 
+    /// Holds the button with Shift on `target`: whatever the smart cursor picks
+    /// there is used until the tile breaks, giving up after ten swings.
+    fn dig(player: &mut Player, world: &mut World, target: [i32; 2]) -> bool {
+        let at = [target[0] as f32 + 0.5, target[1] as f32 + 0.5];
+        let latched = player.smart_item(world, target);
+        for _ in 0..10 {
+            if player.use_held(world, at, latched).is_some() {
+                return true;
+            }
+            while player.busy() {
+                player.update(world, Intent::default(), DT);
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn the_smart_cursor_picks_the_tool_for_the_tile_and_leaves_the_hotbar_alone() {
+        let mut world = flat_world();
+        world.set(23, GROUND - 1, TRUNK);
+        let player = standing_player();
+        assert_eq!(player.smart_item(&world, [21, GROUND]), Some(Item::Pickaxe));
+        assert_eq!(player.smart_item(&world, [23, GROUND - 1]), Some(Item::Axe));
+        assert_eq!(
+            player.smart_item(&world, [18, GROUND - 1]),
+            Some(Item::Torch),
+            "air against the ground"
+        );
+        assert_eq!(
+            player.smart_item(&world, [18, GROUND - 4]),
+            None,
+            "air touching nothing"
+        );
+        assert_eq!(player.smart_item(&world, [60, GROUND]), None, "out of reach");
+
+        let mut player = standing_player();
+        let selected = player.inventory.selected;
+        assert!(dig(&mut player, &mut world, [21, GROUND]));
+        assert_eq!(player.inventory.selected, selected);
+    }
+
+    #[test]
+    fn a_hold_that_starts_on_a_block_keeps_mining_and_never_places_torches() {
+        let mut world = flat_world();
+        let mut player = standing_player();
+        let torches = |p: &Player| {
+            p.inventory
+                .slots
+                .iter()
+                .flatten()
+                .filter(|s| s.item == Item::Torch)
+                .map(|s| s.count)
+                .sum::<u16>()
+        };
+        let before = torches(&player);
+        let at = [21.5, GROUND as f32 + 0.5];
+        let latched = player.smart_item(&world, [21, GROUND]);
+        assert_eq!(latched, Some(Item::Pickaxe));
+        for _ in 0..12 {
+            player.use_held(&mut world, at, latched);
+            while player.busy() {
+                player.update(&world, Intent::default(), DT);
+            }
+        }
+        assert_eq!(world.get(21, GROUND), AIR, "mined out, then left empty");
+        assert_eq!(torches(&player), before, "no torch was placed in the hole");
+        assert_eq!(
+            player.smart_item(&world, [21, GROUND]),
+            Some(Item::Torch),
+            "a fresh press there would torch it"
+        );
+    }
+
+    #[test]
+    fn a_latched_torch_stops_when_the_torches_run_out() {
+        let mut world = flat_world();
+        let mut player = standing_player();
+        for slot in player.inventory.slots.iter_mut() {
+            if slot.is_some_and(|s| s.item == Item::Torch) {
+                *slot = None;
+            }
+        }
+        player.use_held(&mut world, [18.5, GROUND as f32 - 0.5], Some(Item::Torch));
+        assert_eq!(world.get(18, GROUND - 1), AIR);
+    }
+
+    #[test]
+    fn without_the_smart_cursor_the_held_sword_does_not_mine() {
+        let mut world = flat_world();
+        let mut player = standing_player();
+        assert_eq!(player.inventory.held(), Some(Item::Sword));
+        assert_eq!(player.use_held(&mut world, [21.5, GROUND as f32 + 0.5], None), None);
+        assert!(player.busy(), "but it still swings");
+        assert_eq!(world.get(21, GROUND), STONE);
+    }
+
     #[test]
     fn mining_removes_a_tile_within_reach_and_bumps_its_chunk() {
         let mut world = flat_world();
-        let player = standing_player();
+        let mut player = standing_player();
         let before = world.chunk_revision(0, 1);
 
         assert!(
-            player.mine(&mut world, [21, GROUND]),
+            dig(&mut player, &mut world, [21, GROUND]),
             "a tile at the player's feet is in reach"
         );
         assert_eq!(world.get(21, GROUND), AIR);
@@ -478,16 +591,16 @@ mod tests {
     #[test]
     fn mining_ignores_targets_out_of_reach_and_tiles_that_are_not_solid() {
         let mut world = flat_world();
-        let player = standing_player();
+        let mut player = standing_player();
 
         assert!(
-            !player.mine(&mut world, [60, GROUND]),
+            !dig(&mut player, &mut world, [60, GROUND]),
             "far tile should be out of reach"
         );
         assert_eq!(world.get(60, GROUND), STONE);
-        assert!(!player.mine(&mut world, [20, GROUND - 5]), "air is not mineable");
+        assert!(!dig(&mut player, &mut world, [20, GROUND - 5]), "air is not mineable");
         assert!(
-            !player.mine(&mut world, [-1, GROUND]),
+            !dig(&mut player, &mut world, [-1, GROUND]),
             "outside the world is not mineable"
         );
     }
@@ -511,10 +624,13 @@ mod tests {
         let mut player = standing_player();
 
         assert!(
-            !player.mine(&mut world, [22, GROUND]),
+            !dig(&mut player, &mut world, [22, GROUND]),
             "a standing tree anchors its ground"
         );
-        assert!(player.mine(&mut world, [22, GROUND - 2]), "trunk cells are choppable");
+        assert!(
+            dig(&mut player, &mut world, [22, GROUND - 2]),
+            "trunk cells are choppable"
+        );
         for _ in 0..30 {
             player.update(&world, Intent { walk: 1.0, jump: false }, DT);
         }

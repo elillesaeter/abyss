@@ -3,6 +3,7 @@
 //! Only tile ids are stored today. Further per-tile state (walls, liquid, flags)
 //! becomes additional arrays on `Chunk` without touching existing access paths.
 
+use crate::mining::Wear;
 use crate::sky::Sky;
 use crate::tiles::{AIR, TileId, is_solid};
 use crate::trees::Forest;
@@ -59,6 +60,8 @@ pub struct World {
     /// Trees standing on the grid and pieces of them falling. Their trunk cells
     /// are ordinary tiles; this is what draws and fells them.
     pub forest: Forest,
+    /// Damage on tiles partway to breaking.
+    pub wear: Wear,
     /// Time of day.
     pub sky: Sky,
 }
@@ -86,6 +89,7 @@ impl World {
             highest: vec![height; width as usize],
             surface: vec![height; width as usize],
             forest: Forest::default(),
+            wear: Wear::default(),
             sky: Sky::default(),
         }
     }

@@ -400,6 +400,11 @@ pub fn swing_hand(arc: f32) -> ([f32; 2], [f32; 2]) {
     (hand, [d[0] / len, d[1] / len])
 }
 
+/// The front hand in frame `frame`, in its pixels.
+pub fn hand(frame: u16) -> [f32; 2] {
+    skeleton(&pose(frame)).arms[1][2]
+}
+
 /// Paints every part of every frame into the atlas's sprite band.
 pub fn paint(px: &mut [u8]) {
     for frame in 0..frames::COUNT {

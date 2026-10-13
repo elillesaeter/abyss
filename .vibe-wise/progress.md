@@ -748,7 +748,7 @@ Stage: done, committed (learner asked to commit after round 1b)
 Black dashes above canopies: nearest-sampled mask UV at an exact pixel-centre
 edge read the neighbouring atlas cell's row. Fixed by clamping mask lookups
 inside their cell (shader.wgsl shade()). 180 tests pass.
-Stage: implemented, learner confirmed it looks better (not committed).
+Stage: done, committed 07d3034.
 
 ## Smooth running: steps and swing-while-running
 Learner asks: feet stop when swinging while running; run anim flickers to
@@ -758,8 +758,30 @@ fast enough for future speed accessories (Hermes boots).
 Decided: no step-up delay (Terraria-like); snap down 1-tile drops while walking
 (glide sprite via negative step_lag); legs frame follows movement, upper body
 follows action (Frame.legs + upper_shift from character::drop); moonwalk always.
-Stage: implemented, 182 tests pass; awaiting in-game review (not committed).
+Stage: done, committed 07d3034 and pushed.
 
 ## Formatting
 Learner chose rustfmt, max_width 120 (rustfmt.toml). Committed separately as
 83032cc (format only). Run cargo fmt before each commit.
+
+## Round 2a: tools and mining
+Decided: Pickaxe/Axe items (Weapon + power) in typed tool belt (pick, axe,
+hammer-empty); Terraria tile health (dirt 50, stone 100, trunk 80), heal after
+4 s, 3 crack stages; mined tiles drop items, felled tree drops wood on landing;
+Shift smart cursor (block->pick, trunk->axe, air touching block->torch, else
+hotbar), left click auto-swing, right-click mining removed; held torch lights;
+bottom bar (hotbar centre, health/mana bars, smart-tool orb left); Cmd+Q quits.
+Later: round 2b inventory screen (Esc, bags WoW-style, character pane), wood
+tile, canopy drops (acorns, apples), Ctrl smart cursor.
+Also: drop magnet now pulls straight at the player and only when the item fits
+(mined drops sat stuck in their own pit). Hearts replaced by the health bar.
+Stage: done, committed with the torch fix.
+
+## Round 2a fix: torches filling mined holes
+Cause: smart pick re-evaluated each auto-swing; a broken block became air
+touching a block, so the hold switched to placing torches. Torch tile had no
+art (orange tile). Decided: latch the smart pick at button press for the
+whole hold (Terraria), even if Shift is released; placing needs the item in
+inventory; torches drawn as sprites by mount: floor upright, side wall
+leaning out 0.45 rad, else facing out (flame only); unlit glow.
+Stage: done, committed.

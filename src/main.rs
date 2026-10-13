@@ -9,6 +9,7 @@ mod entity;
 mod icons;
 mod items;
 mod light;
+mod mining;
 mod mob;
 mod noise;
 mod physics;
@@ -88,8 +89,9 @@ fn main() {
         return;
     }
     println!(
-        "A/D walks, W or Space jumps, left click mines, right click places a torch, \
-         -/= zooms, hold T to speed time up, Esc quits"
+        "A/D walks, W or Space jumps, left click uses the held item, hold Shift to \
+         mine, chop or place a torch, 1-0 or the wheel picks, -/= zooms, hold T to \
+         speed time up, Cmd+Q quits"
     );
 
     let event_loop = EventLoop::new().expect("create event loop");
@@ -115,6 +117,8 @@ struct App {
     cursor: [f32; 2],
     /// Held down, the left button keeps using the held item.
     using_held: bool,
+    /// What the current hold uses instead, picked by the smart cursor at the press.
+    latched: Option<items::Item>,
     popups: Vec<combat::Popup>,
     /// `--zoom` from the command line, applied instead of fitting the default view.
     zoom_override: Option<usize>,
@@ -147,11 +151,33 @@ impl App {
             held: HashSet::new(),
             cursor: [0.0, 0.0],
             using_held: false,
+            latched: None,
             popups: Vec::new(),
             last_frame: Instant::now(),
             frames_wanted: frames,
             started: Instant::now(),
         }
+    }
+
+    fn held_any(&self, keys: &[KeyCode]) -> bool {
+        keys.iter().any(|k| self.held.contains(k))
+    }
+
+    /// Shift held: the smart cursor picks the tool for the hovered tile.
+    fn smart(&self) -> bool {
+        self.held_any(&[KeyCode::ShiftLeft, KeyCode::ShiftRight])
+    }
+
+    /// A tool broke the tile at `tile`: a felled trunk brings its tree down,
+    /// anything else drops its item, and the noise draws mobs.
+    fn broke(&mut self, tile: [i32; 2], id: tiles::TileId) {
+        let centre = [tile[0] as f32 + 0.5, tile[1] as f32 + 0.5];
+        if id == tiles::TRUNK {
+            trees::after_cut(&mut self.world, tile[0], tile[1], self.player.pos[0]);
+        } else if let Some(item) = mining::drop_for(id) {
+            combat::spawn_drop(&mut self.entities, &self.world, centre, item, 1);
+        }
+        self.noise.record(centre);
     }
 
     fn intent(&self) -> Intent {
@@ -214,8 +240,19 @@ impl ApplicationHandler for App {
                 state,
                 ..
             } => {
-                // Used each frame while held; see RedrawRequested.
+                // Used each frame while held; see RedrawRequested. With Shift
+                // down at the press, the smart cursor's pick is latched for the
+                // whole hold, Shift or no Shift, wherever the pointer goes.
                 self.using_held = state == ElementState::Pressed;
+                self.latched = None;
+                if self.using_held && self.smart() {
+                    let at = self.camera.px_to_tile(self.cursor);
+                    let target = [at[0].floor() as i32, at[1].floor() as i32];
+                    self.latched = self
+                        .player
+                        .smart_item(&self.world, target)
+                        .or(self.player.inventory.held());
+                }
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let steps = match delta {
@@ -227,30 +264,6 @@ impl ApplicationHandler for App {
                     self.player.inventory.select(selected - steps.signum() as i32);
                 }
             }
-            WindowEvent::MouseInput {
-                button,
-                state: ElementState::Pressed,
-                ..
-            } if !self.player.is_dead() => {
-                let tile = self.camera.px_to_tile(self.cursor);
-                let target = [tile[0].floor() as i32, tile[1].floor() as i32];
-                // Every swing shows, landed or not, turned toward the cursor.
-                if button == MouseButton::Right {
-                    self.player.act_toward(tile[0], player::USE_TIME);
-                }
-                match button {
-                    // ponytail: mining on right-click until the tool belt and
-                    // Shift smart cursor replace it.
-                    MouseButton::Right => {
-                        if self.player.mine(&mut self.world, target) {
-                            trees::after_cut(&mut self.world, target[0], target[1], self.player.pos[0]);
-                            // Mining is the disturbance mobs react to.
-                            self.noise.record([target[0] as f32 + 0.5, target[1] as f32 + 0.5]);
-                        }
-                    }
-                    _ => {}
-                }
-            }
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -260,7 +273,11 @@ impl ApplicationHandler for App {
                     },
                 ..
             } => match (code, state) {
+                // ponytail: Escape quits until it opens the inventory (round 2b).
                 (KeyCode::Escape, ElementState::Pressed) => event_loop.exit(),
+                (KeyCode::KeyQ, ElementState::Pressed) if self.held_any(&[KeyCode::SuperLeft, KeyCode::SuperRight]) => {
+                    event_loop.exit()
+                }
                 (KeyCode::Minus, ElementState::Pressed) => {
                     self.camera.zoom_out();
                     self.camera.clamp_to_world(self.world.width(), self.world.height());
@@ -285,7 +302,10 @@ impl ApplicationHandler for App {
                 self.last_frame = now;
                 let intent = self.intent();
                 self.noise.advance(dt);
-                trees::update(&mut self.world, dt);
+                for (pos, count) in trees::update(&mut self.world, dt) {
+                    combat::spawn_drop(&mut self.entities, &self.world, pos, items::Item::Wood, count);
+                }
+                self.world.wear.update(dt);
                 let speed = if self.held.contains(&KeyCode::KeyT) {
                     TIME_WARP
                 } else {
@@ -294,7 +314,9 @@ impl ApplicationHandler for App {
                 self.world.sky.advance(dt * speed);
                 if self.using_held {
                     let at = self.camera.px_to_tile(self.cursor);
-                    self.player.use_held(&mut self.world, at);
+                    if let Some((tile, id)) = self.player.use_held(&mut self.world, at, self.latched) {
+                        self.broke(tile, id);
+                    }
                 }
                 self.player.update(&self.world, intent, dt);
                 let view = self.camera.visible_tiles(self.world.width(), self.world.height());
@@ -313,7 +335,19 @@ impl ApplicationHandler for App {
                     .follow_smoothed(self.player.visual_pos(), dt, self.world.width(), self.world.height());
                 // Light last: it is computed for wherever the camera ended up.
                 let lit = self.camera.visible_tiles(self.world.width(), self.world.height());
+                let torch = combat::held_torch(&self.player);
+                self.light.set_lamps(torch.map(|p| {
+                    (
+                        [p[0].floor() as i32, p[1].floor() as i32],
+                        tiles::tile_type(tiles::TORCH).light,
+                    )
+                }));
                 self.light.update(&self.world, lit, &self.world.sky.lighting());
+                let hovered = self.camera.px_to_tile(self.cursor);
+                let picked = self
+                    .player
+                    .smart_item(&self.world, [hovered[0].floor() as i32, hovered[1].floor() as i32]);
+                let smart = (picked, self.smart());
                 if let Some(renderer) = &mut self.renderer {
                     renderer.render(
                         &self.world,
@@ -322,6 +356,7 @@ impl ApplicationHandler for App {
                         &self.entities,
                         &self.popups,
                         &self.light,
+                        smart,
                     );
                     if let Some(wanted) = self.frames_wanted {
                         let timed_out = self.started.elapsed() > Duration::from_secs(30);
@@ -404,7 +439,7 @@ fn screenshot(mut world: World, seed: u64, path: &str, width: u32, height: u32, 
         log.advance(1.0 / 60.0);
     }
     // Mid-swing, with a damage number in the air, so a capture shows combat.
-    player.use_held(&mut world, [player.pos[0] + 5.0, player.pos[1]]);
+    player.use_held(&mut world, [player.pos[0] + 5.0, player.pos[1]], None);
     for _ in 0..8 {
         player.update(&world, Intent::default(), 1.0 / 60.0);
     }
@@ -428,6 +463,10 @@ fn screenshot(mut world: World, seed: u64, path: &str, width: u32, height: u32, 
         }
     }
     world.place(mouth - 13, floor - 1, tiles::TORCH);
+    // One on the tunnel's end wall and one in the open air, to show how each
+    // sits.
+    world.place(mouth - 19, floor - 2, tiles::TORCH);
+    world.place(player.pos[0] as i32 - 3, player.pos[1] as i32 - 3, tiles::TORCH);
     // A shaft straight down from the surface, to show the backdrop fading with depth.
     let shaft = player.pos[0] as i32 + 7;
     let top = worldgen::surface_y(world.height(), seed, shaft);
@@ -444,18 +483,43 @@ fn screenshot(mut world: World, seed: u64, path: &str, width: u32, height: u32, 
         }
     }
 
+    // Cracks in the ground beside the player, a stage of each.
+    for (dx, hits) in [(2, 1), (3, 2)] {
+        let x = player.pos[0] as i32 + dx;
+        let y = worldgen::surface_y(world.height(), seed, x);
+        for _ in 0..hits {
+            mining::hit(&mut world, [x, y], items::ToolKind::Pickaxe, 35);
+        }
+    }
+
     let mut light = LightMap::default();
     let mut renderer = Renderer::offscreen(&world, width, height);
     let lit = camera.visible_tiles(world.width(), world.height());
     let started = Instant::now();
     light.update(&world, lit, &world.sky.lighting());
     let light_time = started.elapsed();
-    renderer.render(&world, &camera, &player, &entities, &popups, &light);
+    renderer.render(
+        &world,
+        &camera,
+        &player,
+        &entities,
+        &popups,
+        &light,
+        (Some(items::Item::Pickaxe), false),
+    );
     // A second frame, after mining, exercises cache invalidation in the capture too.
     let feet = [player.pos[0] as i32, (player.pos[1] + player::HALF[1]) as i32 + 1];
-    player.mine(&mut world, feet);
+    world.mine_for_capture(feet[0], feet[1]);
     light.update(&world, lit, &world.sky.lighting());
-    renderer.render(&world, &camera, &player, &entities, &popups, &light);
+    renderer.render(
+        &world,
+        &camera,
+        &player,
+        &entities,
+        &popups,
+        &light,
+        (Some(items::Item::Pickaxe), false),
+    );
 
     match renderer.save_capture(path) {
         Ok(()) => println!(

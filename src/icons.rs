@@ -1,9 +1,10 @@
 //! Small sprites painted by code at startup into a grid of 16-pixel cells in
-//! the atlas: gel cubes, the sword, item icons, hearts, digits and hotbar slots.
+//! the atlas: gel cubes, the sword and tools, item icons, cracks, digits and the
+//! bottom bar's pieces.
 //! A sprite spans one or more cells; an instance names its first cell and size.
 //!
-//! Some are painted in greys so a tint colours them (cubes, hearts, digits,
-//! slots); the rest are painted in their own colours and drawn untinted.
+//! Some are painted in greys so a tint colours them (cubes, digits, slots, the
+//! orb and bars); the rest are painted in their own colours and drawn untinted.
 
 use crate::atlas::{DIRT_RAMP, ICON, ICON_BAND_Y, ICON_COLS, STONE_RAMP, WIDTH};
 use crate::items::Item;
@@ -27,7 +28,6 @@ pub const SWORD_GRIP: [f32; 2] = [8.0, 27.5];
 pub const SWORD_ICON: Icon = icon(8, 1, 1);
 pub const BONE: Icon = icon(9, 1, 1);
 pub const TORCH_ICON: Icon = icon(10, 1, 1);
-pub const HEART: Icon = icon(11, 1, 1);
 /// A frame 24 pixels square in the top left of its cells.
 pub const SLOT: Icon = icon(12, 2, 2);
 pub const SLOT_PX: u32 = 24;
@@ -37,10 +37,28 @@ pub const STONE_ICON: Icon = icon(15, 1, 1);
 /// cell, inside a dark rim.
 pub const DIGITS: u16 = 16;
 pub const DIGIT_ADVANCE: u32 = 6;
+/// Held tools, upright with the head at the top, gripped at `TOOL_GRIP`.
+pub const PICKAXE: Icon = icon(26, 2, 2);
+pub const AXE: Icon = icon(28, 2, 2);
+pub const TOOL_GRIP: [f32; 2] = [16.0, 27.5];
+pub const PICKAXE_ICON: Icon = icon(30, 1, 1);
+pub const AXE_ICON: Icon = icon(31, 1, 1);
+pub const WOOD_ICON: Icon = icon(32, 1, 1);
+/// Cracks over a damaged tile, one cell per stage from the first.
+pub const CRACKS: u16 = 33;
+/// The smart cursor's orb: a ring 24 pixels across in the top left of its cells.
+pub const ORB: Icon = icon(36, 2, 2);
+/// A solid square, stretched and tinted into bars.
+pub const BAR: Icon = icon(38, 1, 1);
+/// A torch seen end on, set in the wall behind: the flame, a hint of stick.
+pub const TORCH_FRONT: Icon = icon(39, 1, 1);
 
 pub fn item_icon(item: Item) -> Icon {
     match item {
         Item::Sword => SWORD_ICON,
+        Item::Pickaxe => PICKAXE_ICON,
+        Item::Axe => AXE_ICON,
+        Item::Wood => WOOD_ICON,
         Item::Dirt => DIRT_ICON,
         Item::Stone => STONE_ICON,
         Item::Torch => TORCH_ICON,
@@ -50,6 +68,11 @@ pub fn item_icon(item: Item) -> Icon {
 
 pub fn digit(d: u32) -> Icon {
     icon(DIGITS + d as u16, 1, 1)
+}
+
+/// The cracks for `stage`, from 1.
+pub fn crack(stage: u32) -> Icon {
+    icon(CRACKS + stage as u16 - 1, 1, 1)
 }
 
 /// Rows of the grid in use.
@@ -117,12 +140,27 @@ pub fn paint(px: &mut [u8]) {
         cube(&mut Paint::on(px, icon), width as i32);
     }
     slot(&mut Paint::on(px, SLOT));
-    let rimmed: [(Icon, &dyn Fn(&mut Paint)); 7] = [
+    orb(&mut Paint::on(px, ORB));
+    let mut bar = Paint::on(px, BAR);
+    for y in 0..ICON as i32 {
+        for x in 0..ICON as i32 {
+            bar.grey(x, y, 255, 255);
+        }
+    }
+    for stage in 1..=crate::mining::CRACK_STAGES {
+        cracks(&mut Paint::on(px, crack(stage)), stage as usize);
+    }
+    let rimmed: [(Icon, &dyn Fn(&mut Paint)); 12] = [
         (SWORD, &sword),
         (SWORD_ICON, &sword_icon),
+        (PICKAXE, &pickaxe),
+        (AXE, &axe),
+        (PICKAXE_ICON, &pickaxe_icon),
+        (AXE_ICON, &axe_icon),
+        (WOOD_ICON, &wood_icon),
         (BONE, &bone),
         (TORCH_ICON, &torch_icon),
-        (HEART, &heart),
+        (TORCH_FRONT, &torch_front),
         (DIRT_ICON, &|p| block_icon(p, &DIRT_RAMP)),
         (STONE_ICON, &|p| block_icon(p, &STONE_RAMP)),
     ];
@@ -295,32 +333,186 @@ fn torch_icon(p: &mut Paint) {
     }
 }
 
-const HEART_SHAPE: [&str; 8] = [
-    ".##...##.",
-    "####.####",
-    "#########",
-    "#########",
-    ".#######.",
-    "..#####..",
-    "...###...",
-    "....#....",
+const WOOD: [[u8; 3]; 3] = [[92, 60, 38], [124, 84, 52], [156, 112, 70]];
+
+/// A two-pixel wooden handle down the middle, from `top` to the bottom.
+fn handle(p: &mut Paint, top: i32) {
+    for y in top..31 {
+        p.set(15, y, rgb(WOOD[2]));
+        p.set(16, y, rgb(WOOD[1]));
+    }
+    p.set(15, 31, rgb(WOOD[0]));
+    p.set(16, 31, rgb(WOOD[0]));
+}
+
+fn pickaxe(p: &mut Paint) {
+    handle(p, 6);
+    // A head curving down to two points, thickest over the handle.
+    for x in 3..29 {
+        let off = x as f32 - 15.5;
+        let y = (4.0 + off * off / 28.0).round() as i32;
+        let thick = if off.abs() < 6.0 {
+            3
+        } else if off.abs() < 11.0 {
+            2
+        } else {
+            1
+        };
+        for k in 0..thick {
+            p.set(x, y + k, rgb(STEEL[2 - k as usize]));
+        }
+    }
+    for y in 3..9 {
+        p.set(14, y, rgb(STEEL[0]));
+        p.set(17, y, rgb(STEEL[0]));
+    }
+}
+
+fn axe(p: &mut Paint) {
+    handle(p, 3);
+    // A head on the leading side, flaring to a bright edge; a short poll behind.
+    for y in 5..12 {
+        for x in 17..24 {
+            let shade = if y == 5 {
+                2
+            } else if y == 11 {
+                0
+            } else {
+                1
+            };
+            p.set(x, y, rgb(STEEL[shade]));
+        }
+    }
+    for x in 24..27 {
+        let flare = x - 23;
+        for y in 5 - flare..12 + flare {
+            p.set(x, y, rgb(if x == 26 { STEEL[2] } else { STEEL[1] }));
+        }
+    }
+    for y in 6..11 {
+        for x in 12..15 {
+            p.set(x, y, rgb(STEEL[0]));
+        }
+    }
+}
+
+/// A handle laid diagonally, bottom left to top right, ending at (`end`, 16 - `end`).
+fn diagonal_handle(p: &mut Paint, end: i32) {
+    for x in 2..end {
+        p.set(x, 15 - x, rgb(WOOD[2]));
+        p.set(x + 1, 15 - x, rgb(WOOD[0]));
+    }
+}
+
+fn pickaxe_icon(p: &mut Paint) {
+    diagonal_handle(p, 11);
+    // The head crosses the handle's end at right angles, its points bent down.
+    for i in 0..9 {
+        p.set(6 + i, 1 + i, rgb(STEEL[2]));
+        if (2..7).contains(&i) {
+            p.set(6 + i, 2 + i, rgb(STEEL[0]));
+        }
+    }
+    p.set(5, 2, rgb(STEEL[1]));
+    p.set(14, 10, rgb(STEEL[1]));
+}
+
+fn axe_icon(p: &mut Paint) {
+    diagonal_handle(p, 12);
+    for y in 1..8 {
+        for x in 9..15 {
+            let d = x - 9 + (7 - y);
+            if (3..9).contains(&d) {
+                p.set(x, y, rgb(if d >= 7 { STEEL[2] } else { STEEL[1] }));
+            }
+        }
+    }
+}
+
+fn wood_icon(p: &mut Paint) {
+    // A log lying across, its cut end showing rings on the left.
+    for y in 5..11 {
+        for x in 3..14 {
+            let shade = if y == 5 {
+                2
+            } else if y == 10 {
+                0
+            } else {
+                1
+            };
+            p.set(x, y, rgb(WOOD[shade]));
+        }
+    }
+    for y in 4..12 {
+        for x in 1..5 {
+            let (dx, dy) = (x as f32 - 2.5, y as f32 - 7.5);
+            let r = (dx * dx / 2.25 + dy * dy / 12.0).sqrt();
+            if r <= 1.05 {
+                let ring = (r * 3.0) as i32 % 2 == 0;
+                p.set(x, y, rgb(if ring { [214, 176, 122] } else { [176, 134, 88] }));
+            }
+        }
+    }
+}
+
+fn torch_front(p: &mut Paint) {
+    // The stick's end, foreshortened to a stub under the flame.
+    for (x, y) in [(7, 10), (8, 10), (7, 11), (8, 11)] {
+        p.set(x, y, rgb(if x == 7 { [132, 92, 58] } else { [96, 64, 42] }));
+    }
+    for y in 3..10 {
+        for x in 4..12 {
+            let (dx, dy) = (x as f32 - 7.5, (y as f32 - 7.0) * if y < 7 { 0.7 } else { 1.2 });
+            let d = dx.hypot(dy);
+            let c = match () {
+                _ if d < 1.2 => [255, 244, 190],
+                _ if d < 2.2 => [255, 200, 90],
+                _ if d < 3.2 => [235, 120, 40],
+                _ => continue,
+            };
+            p.set(x, y, rgb(c));
+        }
+    }
+}
+
+/// Crack lines from the middle of a tile, more of them each stage.
+const CRACK_LINES: [&[([i32; 2], [i32; 2])]; 3] = [
+    &[([8, 8], [4, 5]), ([8, 8], [11, 10])],
+    &[([8, 8], [9, 3]), ([8, 8], [5, 12]), ([4, 5], [1, 6])],
+    &[
+        ([8, 8], [13, 6]),
+        ([11, 10], [14, 14]),
+        ([9, 3], [11, 0]),
+        ([5, 12], [3, 15]),
+    ],
 ];
 
-fn heart(p: &mut Paint) {
-    for (y, row) in HEART_SHAPE.iter().enumerate() {
-        for (x, c) in row.bytes().enumerate() {
-            if c != b'#' {
+fn cracks(p: &mut Paint, stage: usize) {
+    for &(a, b) in CRACK_LINES[..stage].iter().flat_map(|lines| lines.iter()) {
+        let n = (b[0] - a[0]).abs().max((b[1] - a[1]).abs());
+        for k in 0..=n {
+            let t = k as f32 / n as f32;
+            let x = a[0] as f32 + (b[0] - a[0]) as f32 * t;
+            let y = a[1] as f32 + (b[1] - a[1]) as f32 * t;
+            p.set(x.round() as i32, y.round() as i32, [24, 18, 20, 255]);
+        }
+    }
+}
+
+/// A round frame like a slot's, lit from the top left.
+fn orb(p: &mut Paint) {
+    for y in 0..24 {
+        for x in 0..24 {
+            let (dx, dy) = (x as f32 - 11.5, y as f32 - 11.5);
+            let d = dx.hypot(dy);
+            if d > 11.8 {
                 continue;
             }
-            let (x, y) = (x as i32, y as i32);
-            let g = if (x == 1 || x == 2) && y == 1 {
-                255
-            } else if y >= 5 || x == 8 {
-                150
+            if d > 10.4 {
+                p.grey(x, y, if dx + dy < 0.0 { 235 } else { 160 }, 255);
             } else {
-                205
-            };
-            p.grey(3 + x, 4 + y, g, 255);
+                p.grey(x, y, 150, 150);
+            }
         }
     }
 }
@@ -405,7 +597,24 @@ mod tests {
         let mut px = vec![0u8; (WIDTH * crate::atlas::HEIGHT * 4) as usize];
         paint(&mut px);
         let mut icons: Vec<Icon> = CUBES.iter().map(|c| c.0).collect();
-        icons.extend([SWORD, SWORD_ICON, BONE, TORCH_ICON, HEART, SLOT, DIRT_ICON, STONE_ICON]);
+        icons.extend([
+            SWORD,
+            SWORD_ICON,
+            PICKAXE,
+            AXE,
+            PICKAXE_ICON,
+            AXE_ICON,
+            WOOD_ICON,
+            BONE,
+            TORCH_ICON,
+            SLOT,
+            DIRT_ICON,
+            STONE_ICON,
+            ORB,
+            BAR,
+            TORCH_FRONT,
+        ]);
+        icons.extend((1..=crate::mining::CRACK_STAGES).map(crack));
         icons.extend((0..10).map(digit));
         let mut owner = std::collections::HashMap::new();
         for icon in &icons {

@@ -24,6 +24,7 @@ use crate::combat;
 use crate::draw;
 use crate::entity::Entities;
 use crate::icons;
+use crate::items::Item;
 use crate::light::LightMap;
 use crate::player::{self, Player};
 use crate::sky;
@@ -568,6 +569,7 @@ impl Renderer {
         entities: &Entities,
         popups: &[combat::Popup],
         light: &LightMap,
+        smart: (Option<Item>, bool),
     ) {
         let frame = match &self.target {
             Target::Window { surface, .. } => match surface.get_current_texture() {
@@ -589,6 +591,8 @@ impl Renderer {
         let mut next_id = autotile::FIRST_OBJECT_ID;
         let view_tiles = camera.visible_tiles(world.width(), world.height());
         trees::emit(world, view_tiles, &mut next_id, &mut self.instances);
+        draw::cracks(world, view_tiles, &mut next_id, &mut self.instances);
+        draw::torches(world, view_tiles, &mut next_id, &mut self.instances);
         // Hidden while dead, and blinking while untouchable after a hit.
         let blink = (player.invulnerable * 12.0) as i32 % 2 == 1;
         if !player.is_dead() && !blink {
@@ -600,13 +604,14 @@ impl Renderer {
                 &player.look,
                 next_id,
             );
-            // The sword goes between the body and the near hand that grips it.
+            // What's held goes between the body and the near hand that grips it.
             let hand = character::PARTS
                 .iter()
                 .position(|&p| p == character::Part::FrontHand)
                 .expect("a front hand");
             self.instances.extend(&parts[..hand]);
             self.instances.extend(draw::sword(player, next_id));
+            self.instances.extend(draw::torch(player, next_id));
             self.instances.extend(&parts[hand..]);
         }
         draw::mobs(entities, &mut next_id, &mut self.instances);
@@ -616,7 +621,15 @@ impl Renderer {
             Target::Window { config, .. } => (config.width, config.height),
             Target::Offscreen { size, .. } => *size,
         };
-        draw::hud(player, camera, viewport, &mut next_id, &mut self.instances);
+        draw::hud(
+            player,
+            smart.0,
+            smart.1,
+            camera,
+            viewport,
+            &mut next_id,
+            &mut self.instances,
+        );
         self.assembly_time = started.elapsed();
         if self.assembly_time > self.peak_assembly {
             self.peak_assembly = self.assembly_time;

@@ -18,9 +18,10 @@ pub const TRUNK: TileId = 4;
 pub struct TileType {
     pub name: &'static str,
     pub solid: bool,
-    /// Whether mining removes it. Separate from `solid` because trunks are chopped
-    /// but walked through, and torches block nothing but are not mined.
-    pub breakable: bool,
+    /// How much a tool must take off it to break it; zero for what tools don't
+    /// break. Separate from `solid` because trunks are chopped but walked through,
+    /// and torches block nothing but are not mined.
+    pub health: i32,
     /// Material block in the atlas.
     pub atlas_mat: u16,
     /// Higher-precedence materials bleed over lower ones at a boundary. Air is
@@ -41,7 +42,7 @@ pub const TILE_TYPES: &[TileType] = &[
     TileType {
         name: "air",
         solid: false,
-        breakable: false,
+        health: 0,
         atlas_mat: 5,
         precedence: 255,
         color: [0, 0, 0, 0],
@@ -51,7 +52,7 @@ pub const TILE_TYPES: &[TileType] = &[
     TileType {
         name: "dirt",
         solid: true,
-        breakable: true,
+        health: 50,
         atlas_mat: MAT_DIRT,
         precedence: 2,
         color: [114, 79, 57, 255],
@@ -61,7 +62,7 @@ pub const TILE_TYPES: &[TileType] = &[
     TileType {
         name: "stone",
         solid: true,
-        breakable: true,
+        health: 100,
         atlas_mat: MAT_STONE,
         precedence: 1,
         color: [92, 85, 91, 255],
@@ -71,7 +72,7 @@ pub const TILE_TYPES: &[TileType] = &[
     TileType {
         name: "torch",
         solid: false,
-        breakable: false,
+        health: 0,
         atlas_mat: 6,
         precedence: 254,
         color: [250, 196, 120, 255],
@@ -82,7 +83,7 @@ pub const TILE_TYPES: &[TileType] = &[
     TileType {
         name: "trunk",
         solid: false,
-        breakable: true,
+        health: 80,
         atlas_mat: 5,
         precedence: 255,
         color: [0, 0, 0, 0],
@@ -129,11 +130,12 @@ pub fn atlas_mat(id: TileId) -> u16 {
 }
 
 pub fn is_breakable(id: TileId) -> bool {
-    tile_type(id).breakable
+    tile_type(id).health > 0
 }
 
-/// What the grid draws for a tile. A trunk cell is drawn as air — sky behind it,
-/// grass and edge shadow on the ground under it — because the tree draws itself.
+/// What the grid draws for a tile. Trunks and torches are drawn as air — sky
+/// behind them, grass and edge shadow on the ground under them — because they
+/// draw themselves: trees as trees, torches as sprites by what they sit on.
 pub fn drawn_as(id: TileId) -> TileId {
-    if id == TRUNK { AIR } else { id }
+    if id == TRUNK || id == TORCH { AIR } else { id }
 }

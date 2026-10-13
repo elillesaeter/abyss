@@ -1,16 +1,19 @@
 //! Instances for what moves and what's on screen: gel cubes with what they
-//! carry, the swung sword, drops, damage numbers, and the hotbar and hearts.
+//! carry, the swung weapon or tool, a held torch, cracks in damaged tiles,
+//! drops, damage numbers, and the bottom bar.
 //! Plain functions from game state to quads, so the renderer only uploads.
 
 use crate::atlas::{CELL, ICON};
 use crate::autotile::{self, GLASS, Instance, NO_OUTLINE, UNLIT};
-use crate::camera::Camera;
+use crate::camera::{Camera, TileRect};
 use crate::combat::{self, Drop, POPUP_TIME, Popup};
 use crate::entity::{Body, Entities, Kind, Sprite};
 use crate::icons::{self, Icon};
-use crate::items::HOTBAR;
+use crate::items::{HOTBAR, Item};
 use crate::mob::{self, Contents, Look, MobState};
 use crate::player::{self, Player};
+use crate::tiles;
+use crate::world::World;
 
 const TILE_PX: f32 = CELL as f32;
 
@@ -91,6 +94,98 @@ pub fn sword(player: &Player, id: u32) -> Option<Instance> {
     Some(autotile::icon(weapon.sprite, pos, ax, ay, [255; 4], 0, id | NO_OUTLINE))
 }
 
+/// A torch upright in the free front hand, drawn like the sword.
+pub fn torch(player: &Player, id: u32) -> Option<Instance> {
+    let hand = combat::held_torch(player)?;
+    // The handle's lower middle sits in the hand.
+    let pos = [hand[0] - 7.5 / TILE_PX, hand[1] - 12.0 / TILE_PX];
+    Some(autotile::icon(
+        icons::TORCH_ICON,
+        pos,
+        [1.0, 0.0],
+        [0.0, 1.0],
+        [255; 4],
+        0,
+        id | NO_OUTLINE,
+    ))
+}
+
+/// What a placed torch sits on, which decides how it's drawn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Mount {
+    /// Standing upright on the block below.
+    Floor,
+    /// Leaning out from a block to one side: -1 on the left, 1 on the right.
+    Wall(f32),
+    /// Set into the wall behind, facing out.
+    Front,
+}
+
+pub fn mount(world: &World, x: i32, y: i32) -> Mount {
+    let solid = |dx: i32, dy: i32| tiles::is_solid(world.get(x + dx, y + dy));
+    if solid(0, 1) {
+        Mount::Floor
+    } else if solid(-1, 0) {
+        Mount::Wall(-1.0)
+    } else if solid(1, 0) {
+        Mount::Wall(1.0)
+    } else {
+        Mount::Front
+    }
+}
+
+/// How far a wall torch leans out from upright, in radians.
+const TORCH_LEAN: f32 = 0.45;
+
+/// Placed torches, glowing whatever the light.
+pub fn torches(world: &World, view: TileRect, next_id: &mut u32, out: &mut Vec<Instance>) {
+    for y in view.y0..=view.y1 {
+        for x in view.x0..=view.x1 {
+            if world.get(x, y) != tiles::TORCH {
+                continue;
+            }
+            *next_id += 1;
+            let id = *next_id | NO_OUTLINE;
+            let tile = [x as f32, y as f32];
+            out.push(match mount(world, x, y) {
+                Mount::Floor => autotile::icon(icons::TORCH_ICON, tile, [1.0, 0.0], [0.0, 1.0], [255; 4], UNLIT, id),
+                Mount::Front => autotile::icon(icons::TORCH_FRONT, tile, [1.0, 0.0], [0.0, 1.0], [255; 4], UNLIT, id),
+                Mount::Wall(side) => {
+                    // The stick's foot rests against the wall, the flame leaning away.
+                    let (s, c) = (-side * TORCH_LEAN).sin_cos();
+                    let (ax, ay) = ([c, s], [-s, c]);
+                    let foot = [x as f32 + 0.5 + side * 0.42, y as f32 + 0.8];
+                    let grip = [8.0 / TILE_PX, 15.0 / TILE_PX];
+                    let pos = [
+                        foot[0] - ax[0] * grip[0] - ay[0] * grip[1],
+                        foot[1] - ax[1] * grip[0] - ay[1] * grip[1],
+                    ];
+                    autotile::icon(icons::TORCH_ICON, pos, ax, ay, [255; 4], UNLIT, id)
+                }
+            });
+        }
+    }
+}
+
+/// Cracks over tiles partway to breaking, deeper the closer they are.
+pub fn cracks(world: &World, view: TileRect, next_id: &mut u32, out: &mut Vec<Instance>) {
+    *next_id += 1;
+    for ([x, y], stage) in world.wear.cracks(world) {
+        if x >= view.x0 && x <= view.x1 && y >= view.y0 && y <= view.y1 {
+            let pos = [x as f32, y as f32];
+            out.push(autotile::icon(
+                icons::crack(stage),
+                pos,
+                [1.0, 0.0],
+                [0.0, 1.0],
+                [255; 4],
+                0,
+                *next_id | NO_OUTLINE,
+            ));
+        }
+    }
+}
+
 pub fn drops(entities: &Entities, next_id: &mut u32, out: &mut Vec<Instance>) {
     for (body, drop) in entities.query::<(&Body, &Drop)>().iter() {
         *next_id += 1;
@@ -154,85 +249,97 @@ const MARGIN: f32 = 10.0;
 const SLOT_GAP: f32 = 2.0;
 const SELECTED: [u8; 4] = [255, 214, 120, 255];
 const UNSELECTED: [u8; 4] = [140, 160, 200, 255];
-const HEART_FULL: [u8; 3] = [232, 52, 64];
-const HEART_EMPTY: [u8; 3] = [60, 42, 48];
+const SMART: [u8; 4] = [255, 214, 120, 255];
+const SMART_OFF: [u8; 4] = [110, 120, 150, 255];
+const BAR_BACK: [u8; 4] = [30, 24, 34, 255];
+const HEALTH: [u8; 4] = [214, 56, 64, 255];
+const MANA: [u8; 4] = [64, 110, 232, 255];
+/// Bar height and the gap above the hotbar, in interface pixels.
+const BAR_H: f32 = 5.0;
+const BAR_GAP: f32 = 3.0;
 
-/// The hotbar along the top left and the hearts at the top right, fixed in
-/// screen pixels whatever the zoom, and lit by nothing.
-pub fn hud(player: &Player, camera: &Camera, viewport: (u32, u32), next_id: &mut u32, out: &mut Vec<Instance>) {
+/// The bottom bar, fixed in screen pixels whatever the zoom and lit by
+/// nothing: the hotbar centred along the bottom, health over its left half
+/// and mana over its right, and to its left the smart cursor's orb, showing
+/// what Shift would use on the hovered tile and lit while Shift is held.
+pub fn hud(
+    player: &Player,
+    smart: Option<Item>,
+    shift: bool,
+    camera: &Camera,
+    viewport: (u32, u32),
+    next_id: &mut u32,
+    out: &mut Vec<Instance>,
+) {
     let s = hud_scale(viewport.1);
-    let px = s / camera.pixels_per_tile();
+    let ppt = camera.pixels_per_tile();
     let at = |x: f32, y: f32| camera.px_to_tile([x, y]);
-    let quad = |icon: Icon| {
-        let [w, h] = tiles(icon);
-        ([w * TILE_PX * px, 0.0], [0.0, h * TILE_PX * px])
-    };
-
     *next_id += 1;
     let id = *next_id | NO_OUTLINE;
-    let slot_step = (icons::SLOT_PX as f32 + SLOT_GAP) * s;
+    let sprite = |icon: Icon, x: f32, y: f32, tint: [u8; 4], out: &mut Vec<Instance>| {
+        let [w, h] = tiles(icon);
+        let size = [w * TILE_PX * s / ppt, h * TILE_PX * s / ppt];
+        out.push(autotile::icon(
+            icon,
+            at(x, y),
+            [size[0], 0.0],
+            [0.0, size[1]],
+            tint,
+            UNLIT,
+            id,
+        ));
+    };
+    let rect = |x: f32, y: f32, w: f32, h: f32, tint: [u8; 4], out: &mut Vec<Instance>| {
+        out.push(autotile::icon(
+            icons::BAR,
+            at(x, y),
+            [w / ppt, 0.0],
+            [0.0, h / ppt],
+            tint,
+            UNLIT,
+            id,
+        ));
+    };
+
+    let slot_px = icons::SLOT_PX as f32 * s;
+    let slot_step = slot_px + SLOT_GAP * s;
+    let width = HOTBAR as f32 * slot_step - SLOT_GAP * s;
+    let left = ((viewport.0 as f32 - width) * 0.5).round();
+    let top = viewport.1 as f32 - MARGIN - slot_px;
+
     for (i, slot) in player.inventory.slots.iter().enumerate().take(HOTBAR) {
-        let (x, y) = (MARGIN + i as f32 * slot_step, MARGIN);
+        let x = left + i as f32 * slot_step;
         let tint = if i == player.inventory.selected {
             SELECTED
         } else {
             UNSELECTED
         };
-        let (ax, ay) = quad(icons::SLOT);
-        out.push(autotile::icon(icons::SLOT, at(x, y), ax, ay, tint, UNLIT, id));
+        sprite(icons::SLOT, x, top, tint, out);
         let Some(stack) = slot else { continue };
-        let icon = icons::item_icon(stack.item);
-        let (ax, ay) = quad(icon);
-        out.push(autotile::icon(
-            icon,
-            at(x + 4.0 * s, y + 4.0 * s),
-            ax,
-            ay,
-            [255; 4],
-            UNLIT,
-            id,
-        ));
+        sprite(icons::item_icon(stack.item), x + 4.0 * s, top + 4.0 * s, [255; 4], out);
         if stack.count > 1 {
             let digits = stack.count.to_string().len() as f32;
-            let centre = at(
-                x + (icons::SLOT_PX as f32 - 2.0 - digits * 3.0) * s,
-                y + (icons::SLOT_PX as f32 - 5.0) * s,
-            );
-            number(
-                stack.count as u32,
-                centre,
-                s * camera.pixels_per_tile().recip() * TILE_PX,
-                [255; 4],
-                0,
-                id,
-                out,
-            );
+            let centre = at(x + slot_px - (2.0 + digits * 3.0) * s, top + slot_px - 5.0 * s);
+            number(stack.count as u32, centre, s * TILE_PX / ppt, [255; 4], 0, id, out);
         }
     }
 
-    let hearts = player::MAX_HEALTH / player::HEART;
-    let heart_step = 12.0 * s;
-    let right = viewport.0 as f32 - MARGIN - hearts as f32 * heart_step - 4.0 * s;
-    for k in 0..hearts {
-        // How full this heart is, from empty to whole.
-        let fill = ((player.health - k * player::HEART) as f32 / player::HEART as f32).clamp(0.0, 1.0);
-        let mix = |e: u8, f: u8| (e as f32 + (f as f32 - e as f32) * fill) as u8;
-        let tint = [
-            mix(HEART_EMPTY[0], HEART_FULL[0]),
-            mix(HEART_EMPTY[1], HEART_FULL[1]),
-            mix(HEART_EMPTY[2], HEART_FULL[2]),
-            255,
-        ];
-        let (ax, ay) = quad(icons::HEART);
-        out.push(autotile::icon(
-            icons::HEART,
-            at(right + k as f32 * heart_step, MARGIN),
-            ax,
-            ay,
-            tint,
-            UNLIT,
-            id,
-        ));
+    let bar_y = top - (BAR_GAP + BAR_H) * s;
+    let half = (width - BAR_GAP * s) * 0.5;
+    let health = player.health as f32 / player::MAX_HEALTH as f32;
+    // ponytail: mana shows full until there is magic to spend it.
+    for (x, fill, tint) in [(left, health, HEALTH), (left + half + BAR_GAP * s, 1.0, MANA)] {
+        rect(x, bar_y, half, BAR_H * s, BAR_BACK, out);
+        let inner = (half - 2.0 * s) * fill.clamp(0.0, 1.0);
+        if inner > 0.0 {
+            rect(x + s, bar_y + s, inner, (BAR_H - 2.0) * s, tint, out);
+        }
+    }
+
+    let orb_x = left - slot_px - 3.0 * SLOT_GAP * s;
+    sprite(icons::ORB, orb_x, top, if shift { SMART } else { SMART_OFF }, out);
+    if let Some(item) = smart {
+        sprite(icons::item_icon(item), orb_x + 4.0 * s, top + 4.0 * s, [255; 4], out);
     }
 }
 
@@ -281,5 +388,67 @@ mod tests {
         );
         assert!(out.windows(2).all(|w| w[1].pos[0] > w[0].pos[0]));
         assert!(out.iter().all(|i| i.edges & UNLIT != 0));
+    }
+
+    #[test]
+    fn the_bottom_bar_sits_centred_with_health_filling_its_share() {
+        let viewport = (1280, 720);
+        let mut camera = Camera::new([50.0, 50.0], viewport);
+        camera.set_zoom(3);
+        let mut player = Player::new([50.0, 50.0]);
+        player.health = player::MAX_HEALTH / 2;
+        let mut out = Vec::new();
+        hud(&player, Some(Item::Pickaxe), true, &camera, viewport, &mut 0, &mut out);
+        let slots: Vec<_> = out.iter().filter(|i| i.mat == icons::SLOT.index).collect();
+        assert_eq!(slots.len(), HOTBAR);
+        let left = camera.tile_to_px(slots[0].pos)[0];
+        // The slot frame fills the top left 24 pixels of its 32-pixel quad.
+        let right = camera.tile_to_px(slots[HOTBAR - 1].pos)[0] + icons::SLOT_PX as f32 * hud_scale(viewport.1);
+        assert!(
+            (left + right - viewport.0 as f32).abs() <= 2.0,
+            "centred: {left} to {right}"
+        );
+        let bottom = camera.tile_to_px([0.0, slots[0].pos[1] + slots[0].axis_y[1]])[1];
+        assert!(bottom > viewport.1 as f32 - 20.0, "along the bottom: {bottom}");
+        let fill = |tint| out.iter().find(|i| i.tint == tint).map(|i| i.axis_x[0]).unwrap();
+        assert!(
+            (fill(HEALTH) / fill(MANA) - 0.5).abs() < 0.01,
+            "half health fills half a bar"
+        );
+        let orb = out.iter().find(|i| i.mat == icons::ORB.index).unwrap();
+        assert_eq!(orb.tint, SMART, "lit while Shift is held");
+        assert!(
+            out.iter().any(|i| i.mat == icons::PICKAXE_ICON.index),
+            "showing what it would use"
+        );
+    }
+
+    #[test]
+    fn a_torch_sits_on_the_floor_first_then_a_wall_else_faces_out() {
+        use crate::tiles::{STONE, TORCH};
+        let mut world = World::new(32, 32);
+        world.set(5, 11, STONE);
+        world.set(4, 10, STONE);
+        assert_eq!(mount(&world, 5, 10), Mount::Floor, "the floor wins over a wall");
+        world.set(10, 10, STONE);
+        assert_eq!(mount(&world, 11, 10), Mount::Wall(-1.0));
+        assert_eq!(mount(&world, 9, 10), Mount::Wall(1.0));
+        assert_eq!(mount(&world, 20, 5), Mount::Front);
+
+        world.set(11, 10, TORCH);
+        let view = TileRect {
+            x0: 0,
+            y0: 0,
+            x1: 31,
+            y1: 31,
+        };
+        let mut out = Vec::new();
+        torches(&world, view, &mut 0, &mut out);
+        let t = out[0];
+        assert!(
+            t.axis_y[0] < 0.0,
+            "leans away from the wall on its left, flame to the right"
+        );
+        assert!(t.edges & UNLIT != 0);
     }
 }

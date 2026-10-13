@@ -52,6 +52,27 @@ fn frame_to_world(player: &Player, p: [f32; 2]) -> [f32; 2] {
     ]
 }
 
+/// Where a torch held in the hand burns, while one is held and the hand is free.
+pub fn held_torch(player: &Player) -> Option<[f32; 2]> {
+    let free = !player.busy() && !player.is_dead();
+    (free && player.inventory.held() == Some(Item::Torch))
+        .then(|| frame_to_world(player, character::hand(player.frame().index)))
+}
+
+/// Puts `count` of `item` into the world at `pos` with a little hop, nudged up
+/// out of any block it would start inside.
+pub fn spawn_drop(entities: &mut Entities, world: &World, mut pos: [f32; 2], item: Item, count: u16) {
+    for _ in 0..3 {
+        if !physics::overlaps_solid(world, pos, DROP_HALF) {
+            break;
+        }
+        pos[1] -= 1.0;
+    }
+    let mut body = Body::new(pos, DROP_HALF);
+    body.vel = [0.0, -6.0];
+    entities.spawn((body, Drop { item, count }));
+}
+
 /// The hand `arc` of the way along a swing, and which way a held weapon points
 /// from it, in the world.
 pub fn grip(player: &Player, arc: f32) -> ([f32; 2], [f32; 2]) {
@@ -140,15 +161,7 @@ pub fn update(world: &World, player: &mut Player, entities: &mut Entities, popup
         let carried = entities.get::<&Contents>(entity).ok().map(|c| *c);
         let _ = entities.despawn(entity);
         if let Some(c) = carried {
-            let mut drop = Body::new(pos, DROP_HALF);
-            drop.vel = [0.0, -6.0];
-            entities.spawn((
-                drop,
-                Drop {
-                    item: c.item,
-                    count: c.count,
-                },
-            ));
+            spawn_drop(entities, world, pos, c.item, c.count);
         }
     }
 
@@ -156,13 +169,16 @@ pub fn update(world: &World, player: &mut Player, entities: &mut Entities, popup
     let mut collected = Vec::new();
     for (entity, body, drop) in entities.query_mut::<(hecs::Entity, &mut Body, &mut Drop)>() {
         let to = [player.pos[0] - body.pos[0], player.pos[1] - body.pos[1]];
-        let pulled = !player.is_dead() && to[0].hypot(to[1]) < PULL_REACH;
-        body.vel[0] = if pulled {
-            to[0].signum() * PULL_SPEED
+        // Only what there is room for is drawn in, straight at the player, so
+        // it climbs out of the pit it was mined from.
+        let distance = to[0].hypot(to[1]);
+        let pulled = !player.is_dead() && distance < PULL_REACH && player.inventory.fits(drop.item);
+        if pulled {
+            body.vel = [to[0] / distance * PULL_SPEED, to[1] / distance * PULL_SPEED];
         } else {
-            body.vel[0] * (-4.0 * dt).exp()
-        };
-        body.vel[1] = (body.vel[1] + physics::GRAVITY * dt).min(physics::MAX_FALL);
+            body.vel[0] *= (-4.0 * dt).exp();
+            body.vel[1] = (body.vel[1] + physics::GRAVITY * dt).min(physics::MAX_FALL);
+        }
         physics::move_box(&mut body.pos, &mut body.vel, body.half, world, dt, false);
         if pulled && overlap(body.pos, body.half, player.pos, player::HALF) {
             drop.count = player.inventory.add(drop.item, drop.count);
@@ -216,13 +232,40 @@ mod tests {
     }
 
     #[test]
+    fn a_mined_block_drops_and_stays_put_when_the_inventory_is_full() {
+        let mut world = flat_world();
+        let (mut entities, mut popups) = (Entities::new(), Vec::new());
+        let mut player = standing_player(&world);
+        // A block dug out of the ground, spawned inside the stone it came from:
+        // it pops up out of the stone rather than being stuck in it.
+        world.set(21, GROUND, crate::tiles::AIR);
+        spawn_drop(&mut entities, &world, [21.5, GROUND as f32 + 1.5], Item::Dirt, 1);
+        for slot in player.inventory.slots.iter_mut() {
+            *slot = Some(crate::items::Stack {
+                item: Item::Sword,
+                count: 1,
+            });
+        }
+        run(&world, &mut player, &mut entities, &mut popups, 2.0);
+        assert_eq!(entities.query::<&Drop>().iter().count(), 1, "nowhere to put it");
+        player.inventory.slots[4] = None;
+        run(&world, &mut player, &mut entities, &mut popups, 2.0);
+        assert_eq!(
+            entities.query::<&Drop>().iter().count(),
+            0,
+            "picked up once there is room"
+        );
+        assert!(player.inventory.has(Item::Dirt));
+    }
+
+    #[test]
     fn one_swing_hits_a_cube_in_reach_once_and_knocks_it_away() {
         let world = flat_world();
         let mut player = standing_player(&world);
         let mut entities = Entities::new();
         let cube = cube_at(&mut entities, mob::GREEN_CUBE, 21.8);
         let mut popups = Vec::new();
-        player.use_held(&mut World::new(32, 32), [30.0, 20.0]);
+        player.use_held(&mut World::new(32, 32), [30.0, 20.0], None);
         run(&world, &mut player, &mut entities, &mut popups, STARTER_SWORD.use_time);
         let state = *entities.get::<&MobState>(cube).unwrap();
         assert_eq!(
@@ -249,7 +292,7 @@ mod tests {
         let behind = cube_at(&mut entities, mob::GREEN_CUBE, 15.0);
         let far = cube_at(&mut entities, mob::GREEN_CUBE, 27.0);
         let mut popups = Vec::new();
-        player.use_held(&mut World::new(32, 32), [30.0, 20.0]);
+        player.use_held(&mut World::new(32, 32), [30.0, 20.0], None);
         run(&world, &mut player, &mut entities, &mut popups, STARTER_SWORD.use_time);
         for cube in [behind, far] {
             assert_eq!(
@@ -274,7 +317,7 @@ mod tests {
         );
         let mut popups = Vec::new();
         for _ in 0..2 {
-            player.use_held(&mut World::new(32, 32), [30.0, 20.0]);
+            player.use_held(&mut World::new(32, 32), [30.0, 20.0], None);
             run(
                 &world,
                 &mut player,

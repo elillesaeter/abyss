@@ -622,6 +622,18 @@ impl Falling {
         }
     }
 
+    /// Each trunk row's resting place, lifted half a tile off the ground it
+    /// lies on, and how many cells it had.
+    fn wood(&self) -> Vec<([f32; 2], u16)> {
+        self.cells
+            .iter()
+            .enumerate()
+            .map(|(k, row)| (row[0] as u16 + row[1] as u16, self.along(k as f32 + 0.5)))
+            .filter(|&(n, _)| n > 0)
+            .map(|(n, p)| ([p[0], p[1] - 0.5], n))
+            .collect()
+    }
+
     fn length(&self) -> f32 {
         (self.tree.height - self.from) as f32
     }
@@ -862,13 +874,21 @@ fn clear_foliage(world: &mut World, before: &Tree) {
     }
 }
 
-/// Advances the wind and every falling piece; pieces vanish when they land.
-// ponytail: landing leaves nothing behind; it drops wood once items exist.
-pub fn update(world: &mut World, dt: f32) {
+/// Advances the wind and every falling piece. Pieces vanish when they land,
+/// leaving their wood: where each trunk row came to rest, and how many cells.
+pub fn update(world: &mut World, dt: f32) -> Vec<([f32; 2], u16)> {
     world.forest.clock += dt;
+    let mut wood = Vec::new();
     let mut falling = std::mem::take(&mut world.forest.falling);
-    falling.retain_mut(|f| f.update(world, dt));
+    falling.retain_mut(|f| {
+        let keep = f.update(world, dt);
+        if !keep {
+            wood.extend(f.wood());
+        }
+        keep
+    });
     world.forest.falling = falling;
+    wood
 }
 
 /// Appends quads for every tree and falling piece near the view.
@@ -1016,6 +1036,34 @@ mod tests {
             chop(&mut world, 0, row);
             assert!(tipped_before_breaking(&mut world), "cut at row {row} did not topple");
         }
+    }
+
+    #[test]
+    fn a_felled_tree_leaves_a_wood_per_trunk_cell_where_it_lands() {
+        let mut world = world_with_tree(2, 12);
+        chop(&mut world, 0, 0);
+        chop(&mut world, 1, 0);
+        let cells: u16 = world.forest.falling[0]
+            .cells
+            .iter()
+            .map(|r| r[0] as u16 + r[1] as u16)
+            .sum();
+        let mut wood = Vec::new();
+        for _ in 0..600 {
+            assert!(
+                wood.is_empty() || world.forest.falling.is_empty(),
+                "wood before landing"
+            );
+            wood.extend(update(&mut world, 1.0 / 60.0));
+            if world.forest.falling.is_empty() {
+                break;
+            }
+        }
+        assert_eq!(wood.iter().map(|w| w.1).sum::<u16>(), cells);
+        assert!(
+            wood.iter().all(|w| (w.0[1] - GROUND as f32).abs() < 3.0),
+            "wood lies on the ground: {wood:?}"
+        );
     }
 
     #[test]
