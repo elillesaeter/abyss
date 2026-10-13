@@ -5,7 +5,7 @@
 use crate::atlas::{CELL, FRAME_H, FRAME_W};
 use crate::character;
 use crate::entity::{Body, Entities, Kind};
-use crate::items::Item;
+use crate::items::{Item, Stack};
 use crate::mob::{self, Contents, MobState};
 use crate::physics;
 use crate::player::{self, Player};
@@ -23,7 +23,13 @@ const PULL_SPEED: f32 = 7.0;
 pub struct Drop {
     pub item: Item,
     pub count: u16,
+    /// Seconds before it can be picked up: a thrown item isn't pulled straight
+    /// back into the hand that threw it.
+    pub wait: f32,
 }
+
+/// How long a thrown item lies before it can be picked up again.
+pub const THROWN_WAIT: f32 = 1.5;
 
 const DROP_HALF: [f32; 2] = [0.3, 0.3];
 
@@ -70,7 +76,21 @@ pub fn spawn_drop(entities: &mut Entities, world: &World, mut pos: [f32; 2], ite
     }
     let mut body = Body::new(pos, DROP_HALF);
     body.vel = [0.0, -6.0];
-    entities.spawn((body, Drop { item, count }));
+    entities.spawn((body, Drop { item, count, wait: 0.0 }));
+}
+
+/// The player throws `stack` out ahead of them.
+pub fn throw(entities: &mut Entities, player: &Player, stack: Stack) {
+    let mut body = Body::new([player.pos[0] + player.facing * 0.8, player.pos[1] - 0.5], DROP_HALF);
+    body.vel = [player.facing * 8.0, -6.0];
+    entities.spawn((
+        body,
+        Drop {
+            item: stack.item,
+            count: stack.count,
+            wait: THROWN_WAIT,
+        },
+    ));
 }
 
 /// The hand `arc` of the way along a swing, and which way a held weapon points
@@ -172,7 +192,8 @@ pub fn update(world: &World, player: &mut Player, entities: &mut Entities, popup
         // Only what there is room for is drawn in, straight at the player, so
         // it climbs out of the pit it was mined from.
         let distance = to[0].hypot(to[1]);
-        let pulled = !player.is_dead() && distance < PULL_REACH && player.inventory.fits(drop.item);
+        drop.wait = (drop.wait - dt).max(0.0);
+        let pulled = !player.is_dead() && drop.wait == 0.0 && distance < PULL_REACH && player.inventory.fits(drop.item);
         if pulled {
             body.vel = [to[0] / distance * PULL_SPEED, to[1] / distance * PULL_SPEED];
         } else {
@@ -240,15 +261,17 @@ mod tests {
         // it pops up out of the stone rather than being stuck in it.
         world.set(21, GROUND, crate::tiles::AIR);
         spawn_drop(&mut entities, &world, [21.5, GROUND as f32 + 1.5], Item::Dirt, 1);
-        for slot in player.inventory.slots.iter_mut() {
-            *slot = Some(crate::items::Stack {
+        for slot in player.inventory.storage() {
+            player.inventory.cursor = Some(Stack {
                 item: Item::Sword,
                 count: 1,
             });
+            player.inventory.click(slot);
         }
         run(&world, &mut player, &mut entities, &mut popups, 2.0);
         assert_eq!(entities.query::<&Drop>().iter().count(), 1, "nowhere to put it");
-        player.inventory.slots[4] = None;
+        player.inventory.click(crate::items::Slot::Hotbar(4));
+        player.inventory.cursor = None;
         run(&world, &mut player, &mut entities, &mut popups, 2.0);
         assert_eq!(
             entities.query::<&Drop>().iter().count(),
@@ -256,6 +279,36 @@ mod tests {
             "picked up once there is room"
         );
         assert!(player.inventory.has(Item::Dirt));
+    }
+
+    #[test]
+    fn a_thrown_stack_lands_ahead_and_is_only_picked_up_after_a_wait() {
+        let world = flat_world();
+        let (mut entities, mut popups) = (Entities::new(), Vec::new());
+        let mut player = standing_player(&world);
+        throw(
+            &mut entities,
+            &player,
+            Stack {
+                item: Item::Bone,
+                count: 3,
+            },
+        );
+        run(&world, &mut player, &mut entities, &mut popups, THROWN_WAIT * 0.8);
+        let (body, _) = entities
+            .query::<(&Body, &Drop)>()
+            .iter()
+            .next()
+            .map(|(b, d)| (*b, *d))
+            .expect("still lying there");
+        assert!(body.pos[0] > player.pos[0] + 1.0, "thrown ahead: {:?}", body.pos);
+        run(&world, &mut player, &mut entities, &mut popups, 3.0);
+        assert_eq!(
+            entities.query::<&Drop>().iter().count(),
+            0,
+            "picked up once the wait is over"
+        );
+        assert!(player.inventory.has(Item::Bone));
     }
 
     #[test]
@@ -338,7 +391,7 @@ mod tests {
         run(&world, &mut player, &mut entities, &mut popups, 1.0);
         let bones: u16 = player
             .inventory
-            .slots
+            .hotbar
             .iter()
             .flatten()
             .filter(|s| s.item == Item::Bone)

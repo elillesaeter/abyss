@@ -785,3 +785,17 @@ whole hold (Terraria), even if Shift is released; placing needs the item in
 inventory; torches drawn as sprites by mount: floor upright, side wall
 leaning out 0.45 rad, else facing out (flame only); unlit glow.
 Stage: done, committed.
+
+## Round 2b: inventory screen
+Decided: hotbar 10 + backpack 10 + 4 bag slots (starter Pouch 8, WoW rules: no
+bag in bag, non-empty bag stays, bigger bag takes contents); character pane
+left (head, back, neck, hands, chest, legs, feet + 5 accessories, tool belt
+row), no portrait, weapons stay in hotbar; bags up right edge. Left click
+pick/place/merge/swap, right click take one (hold repeats), Shift-click
+quick-move/equip; outside panes: left uses cursor item, right throws it
+(1.5 s pickup delay). Esc toggles, game keeps running, smart cursor works.
+Later: vanity toggle button (recolour pane, vanity slots), armour items,
+trash, sorting, empty-slot silhouettes.
+Also: interface tints are linear (dark window needs tiny values). Capture flag
+--inventory shows the screen open with dirt on the cursor.
+Stage: done, committed.

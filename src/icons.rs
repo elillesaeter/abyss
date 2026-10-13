@@ -52,6 +52,7 @@ pub const ORB: Icon = icon(36, 2, 2);
 pub const BAR: Icon = icon(38, 1, 1);
 /// A torch seen end on, set in the wall behind: the flame, a hint of stick.
 pub const TORCH_FRONT: Icon = icon(39, 1, 1);
+pub const POUCH_ICON: Icon = icon(40, 1, 1);
 
 pub fn item_icon(item: Item) -> Icon {
     match item {
@@ -59,6 +60,7 @@ pub fn item_icon(item: Item) -> Icon {
         Item::Pickaxe => PICKAXE_ICON,
         Item::Axe => AXE_ICON,
         Item::Wood => WOOD_ICON,
+        Item::Pouch => POUCH_ICON,
         Item::Dirt => DIRT_ICON,
         Item::Stone => STONE_ICON,
         Item::Torch => TORCH_ICON,
@@ -150,7 +152,8 @@ pub fn paint(px: &mut [u8]) {
     for stage in 1..=crate::mining::CRACK_STAGES {
         cracks(&mut Paint::on(px, crack(stage)), stage as usize);
     }
-    let rimmed: [(Icon, &dyn Fn(&mut Paint)); 12] = [
+    let rimmed: [(Icon, &dyn Fn(&mut Paint)); 13] = [
+        (POUCH_ICON, &pouch_icon),
         (SWORD, &sword),
         (SWORD_ICON, &sword_icon),
         (PICKAXE, &pickaxe),
@@ -455,6 +458,46 @@ fn wood_icon(p: &mut Paint) {
     }
 }
 
+const LEATHER: [[u8; 3]; 3] = [[104, 68, 40], [140, 96, 58], [176, 128, 80]];
+
+fn pouch_icon(p: &mut Paint) {
+    // A round leather body under a gathered neck, tied with a pale cord.
+    for y in 6..15 {
+        for x in 2..14 {
+            let (dx, dy) = (x as f32 - 7.5, y as f32 - 9.5);
+            if dx * dx / 34.0 + dy * dy / 26.0 > 1.0 {
+                continue;
+            }
+            let shade = if dx + dy < -4.0 {
+                2
+            } else if dx + dy > 4.0 {
+                0
+            } else {
+                1
+            };
+            p.set(x, y, rgb(LEATHER[shade]));
+        }
+    }
+    for (x, y) in [
+        (6, 3),
+        (7, 3),
+        (8, 3),
+        (9, 3),
+        (6, 4),
+        (7, 4),
+        (8, 4),
+        (9, 4),
+        (7, 5),
+        (8, 5),
+    ] {
+        p.set(x, y, rgb(LEATHER[1]));
+    }
+    for x in 5..11 {
+        p.set(x, 5, rgb([214, 194, 146]));
+    }
+    p.set(11, 6, rgb([214, 194, 146]));
+}
+
 fn torch_front(p: &mut Paint) {
     // The stick's end, foreshortened to a stub under the flame.
     for (x, y) in [(7, 10), (8, 10), (7, 11), (8, 11)] {
@@ -613,6 +656,7 @@ mod tests {
             ORB,
             BAR,
             TORCH_FRONT,
+            POUCH_ICON,
         ]);
         icons.extend((1..=crate::mining::CRACK_STAGES).map(crack));
         icons.extend((0..10).map(digit));

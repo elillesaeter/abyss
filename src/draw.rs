@@ -9,10 +9,11 @@ use crate::camera::{Camera, TileRect};
 use crate::combat::{self, Drop, POPUP_TIME, Popup};
 use crate::entity::{Body, Entities, Kind, Sprite};
 use crate::icons::{self, Icon};
-use crate::items::{HOTBAR, Item};
+use crate::items::{HOTBAR, Item, Slot, Stack};
 use crate::mob::{self, Contents, Look, MobState};
 use crate::player::{self, Player};
 use crate::tiles;
+use crate::ui::{self, Rect};
 use crate::world::World;
 
 const TILE_PX: f32 = CELL as f32;
@@ -239,16 +240,12 @@ pub fn popups(popups: &[Popup], next_id: &mut u32, out: &mut Vec<Instance>) {
     }
 }
 
-/// Screen pixels per interface art pixel: chunky enough to read on a large
-/// screen without crowding a small one.
-pub fn hud_scale(viewport_height: u32) -> f32 {
-    (viewport_height / 540).max(1) as f32
-}
-
-const MARGIN: f32 = 10.0;
-const SLOT_GAP: f32 = 2.0;
 const SELECTED: [u8; 4] = [255, 214, 120, 255];
 const UNSELECTED: [u8; 4] = [140, 160, 200, 255];
+/// Slots for things worn rather than carried.
+const WORN: [u8; 4] = [196, 170, 128, 255];
+// Tints are linear, so a window dark on screen needs very small values.
+const WINDOW: [u8; 4] = [3, 2, 6, 200];
 const SMART: [u8; 4] = [255, 214, 120, 255];
 const SMART_OFF: [u8; 4] = [110, 120, 150, 255];
 const BAR_BACK: [u8; 4] = [30, 24, 34, 255];
@@ -258,88 +255,177 @@ const MANA: [u8; 4] = [64, 110, 232, 255];
 const BAR_H: f32 = 5.0;
 const BAR_GAP: f32 = 3.0;
 
-/// The bottom bar, fixed in screen pixels whatever the zoom and lit by
-/// nothing: the hotbar centred along the bottom, health over its left half
-/// and mana over its right, and to its left the smart cursor's orb, showing
-/// what Shift would use on the hovered tile and lit while Shift is held.
+/// What the interface shows beyond the player: the smart cursor's pick for
+/// the hovered tile and whether Shift is down, whether the inventory screen is
+/// open, and where the mouse is, in screen pixels.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Hud {
+    pub smart: Option<Item>,
+    pub shift: bool,
+    pub open: bool,
+    pub pointer: [f32; 2],
+}
+
+/// Interface quads in screen pixels, fixed whatever the zoom and lit by
+/// nothing, all under one id.
+struct Screen<'a> {
+    camera: &'a Camera,
+    s: f32,
+    id: u32,
+}
+
+impl Screen<'_> {
+    fn sprite(&self, icon: Icon, x: f32, y: f32, tint: [u8; 4], flags: u32, out: &mut Vec<Instance>) {
+        let [w, h] = tiles(icon);
+        let ppt = self.camera.pixels_per_tile();
+        let size = [w * TILE_PX * self.s / ppt, h * TILE_PX * self.s / ppt];
+        let at = self.camera.px_to_tile([x, y]);
+        out.push(autotile::icon(
+            icon,
+            at,
+            [size[0], 0.0],
+            [0.0, size[1]],
+            tint,
+            UNLIT | flags,
+            self.id,
+        ));
+    }
+
+    fn rect(&self, r: Rect, tint: [u8; 4], out: &mut Vec<Instance>) {
+        let ppt = self.camera.pixels_per_tile();
+        let at = self.camera.px_to_tile([r.x, r.y]);
+        let flags = if tint[3] < 255 { GLASS } else { 0 };
+        out.push(autotile::icon(
+            icons::BAR,
+            at,
+            [r.w / ppt, 0.0],
+            [0.0, r.h / ppt],
+            tint,
+            UNLIT | flags,
+            self.id,
+        ));
+    }
+
+    /// An item's icon with its count, its top left at `x`, `y`.
+    fn stack(&self, stack: Stack, x: f32, y: f32, out: &mut Vec<Instance>) {
+        let s = self.s;
+        self.sprite(icons::item_icon(stack.item), x + 4.0 * s, y + 4.0 * s, [255; 4], 0, out);
+        if stack.count > 1 {
+            let slot = icons::SLOT_PX as f32 * s;
+            let digits = stack.count.to_string().len() as f32;
+            let centre = self
+                .camera
+                .px_to_tile([x + slot - (2.0 + digits * 3.0) * s, y + slot - 5.0 * s]);
+            let px = s * TILE_PX / self.camera.pixels_per_tile();
+            number(stack.count as u32, centre, px, [255; 4], 0, self.id, out);
+        }
+    }
+
+    fn slot(&self, r: Rect, tint: [u8; 4], stack: Option<Stack>, out: &mut Vec<Instance>) {
+        self.sprite(icons::SLOT, r.x, r.y, tint, 0, out);
+        if let Some(stack) = stack {
+            self.stack(stack, r.x, r.y, out);
+        }
+    }
+}
+
+/// The bottom bar, always shown: the hotbar centred along the bottom, health
+/// over its left half and mana over its right, and to its left the smart
+/// cursor's orb, showing what Shift would use on the hovered tile and lit while
+/// Shift is held. With the inventory open, its windows too, and whatever the
+/// mouse has picked up, following the pointer.
 pub fn hud(
     player: &Player,
-    smart: Option<Item>,
-    shift: bool,
+    hud: &Hud,
     camera: &Camera,
     viewport: (u32, u32),
     next_id: &mut u32,
     out: &mut Vec<Instance>,
 ) {
-    let s = hud_scale(viewport.1);
-    let ppt = camera.pixels_per_tile();
-    let at = |x: f32, y: f32| camera.px_to_tile([x, y]);
     *next_id += 1;
-    let id = *next_id | NO_OUTLINE;
-    let sprite = |icon: Icon, x: f32, y: f32, tint: [u8; 4], out: &mut Vec<Instance>| {
-        let [w, h] = tiles(icon);
-        let size = [w * TILE_PX * s / ppt, h * TILE_PX * s / ppt];
-        out.push(autotile::icon(
-            icon,
-            at(x, y),
-            [size[0], 0.0],
-            [0.0, size[1]],
-            tint,
-            UNLIT,
-            id,
-        ));
+    let screen = Screen {
+        camera,
+        s: ui::scale(viewport.1),
+        id: *next_id | NO_OUTLINE,
     };
-    let rect = |x: f32, y: f32, w: f32, h: f32, tint: [u8; 4], out: &mut Vec<Instance>| {
-        out.push(autotile::icon(
-            icons::BAR,
-            at(x, y),
-            [w / ppt, 0.0],
-            [0.0, h / ppt],
-            tint,
-            UNLIT,
-            id,
-        ));
-    };
+    let s = screen.s;
+    let inv = &player.inventory;
 
-    let slot_px = icons::SLOT_PX as f32 * s;
-    let slot_step = slot_px + SLOT_GAP * s;
-    let width = HOTBAR as f32 * slot_step - SLOT_GAP * s;
-    let left = ((viewport.0 as f32 - width) * 0.5).round();
-    let top = viewport.1 as f32 - MARGIN - slot_px;
-
-    for (i, slot) in player.inventory.slots.iter().enumerate().take(HOTBAR) {
-        let x = left + i as f32 * slot_step;
-        let tint = if i == player.inventory.selected {
-            SELECTED
-        } else {
-            UNSELECTED
-        };
-        sprite(icons::SLOT, x, top, tint, out);
-        let Some(stack) = slot else { continue };
-        sprite(icons::item_icon(stack.item), x + 4.0 * s, top + 4.0 * s, [255; 4], out);
-        if stack.count > 1 {
-            let digits = stack.count.to_string().len() as f32;
-            let centre = at(x + slot_px - (2.0 + digits * 3.0) * s, top + slot_px - 5.0 * s);
-            number(stack.count as u32, centre, s * TILE_PX / ppt, [255; 4], 0, id, out);
-        }
+    let bar = ui::hotbar(viewport);
+    for (i, &r) in bar.iter().enumerate() {
+        let tint = if i == inv.selected { SELECTED } else { UNSELECTED };
+        screen.slot(r, tint, inv.hotbar[i], out);
     }
 
-    let bar_y = top - (BAR_GAP + BAR_H) * s;
+    let (left, width) = (bar[0].x, bar[HOTBAR - 1].x + bar[HOTBAR - 1].w - bar[0].x);
+    let bar_y = bar[0].y - (BAR_GAP + BAR_H) * s;
     let half = (width - BAR_GAP * s) * 0.5;
     let health = player.health as f32 / player::MAX_HEALTH as f32;
     // ponytail: mana shows full until there is magic to spend it.
     for (x, fill, tint) in [(left, health, HEALTH), (left + half + BAR_GAP * s, 1.0, MANA)] {
-        rect(x, bar_y, half, BAR_H * s, BAR_BACK, out);
+        screen.rect(
+            Rect {
+                x,
+                y: bar_y,
+                w: half,
+                h: BAR_H * s,
+            },
+            BAR_BACK,
+            out,
+        );
         let inner = (half - 2.0 * s) * fill.clamp(0.0, 1.0);
         if inner > 0.0 {
-            rect(x + s, bar_y + s, inner, (BAR_H - 2.0) * s, tint, out);
+            screen.rect(
+                Rect {
+                    x: x + s,
+                    y: bar_y + s,
+                    w: inner,
+                    h: (BAR_H - 2.0) * s,
+                },
+                tint,
+                out,
+            );
         }
     }
 
-    let orb_x = left - slot_px - 3.0 * SLOT_GAP * s;
-    sprite(icons::ORB, orb_x, top, if shift { SMART } else { SMART_OFF }, out);
-    if let Some(item) = smart {
-        sprite(icons::item_icon(item), orb_x + 4.0 * s, top + 4.0 * s, [255; 4], out);
+    let orb_x = left - bar[0].w - 3.0 * ui::SLOT_GAP * s;
+    screen.sprite(
+        icons::ORB,
+        orb_x,
+        bar[0].y,
+        if hud.shift { SMART } else { SMART_OFF },
+        0,
+        out,
+    );
+    if let Some(item) = hud.smart {
+        screen.sprite(
+            icons::item_icon(item),
+            orb_x + 4.0 * s,
+            bar[0].y + 4.0 * s,
+            [255; 4],
+            0,
+            out,
+        );
+    }
+
+    if !hud.open {
+        return;
+    }
+    let layout = ui::layout(inv, viewport);
+    for &w in &layout.windows {
+        screen.rect(w, WINDOW, out);
+    }
+    for &(slot, r) in &layout.slots {
+        let tint = match slot {
+            Slot::Hotbar(_) => continue,
+            Slot::Backpack(_) | Slot::Bag(..) => UNSELECTED,
+            Slot::BagSlot(_) | Slot::Gear(_) | Slot::Tool(_) => WORN,
+        };
+        screen.slot(r, tint, inv.get(slot), out);
+    }
+    if let Some(c) = inv.cursor {
+        let half_slot = icons::SLOT_PX as f32 * s * 0.5;
+        screen.stack(c, hud.pointer[0] - half_slot, hud.pointer[1] - half_slot, out);
     }
 }
 
@@ -398,12 +484,17 @@ mod tests {
         let mut player = Player::new([50.0, 50.0]);
         player.health = player::MAX_HEALTH / 2;
         let mut out = Vec::new();
-        hud(&player, Some(Item::Pickaxe), true, &camera, viewport, &mut 0, &mut out);
+        let state = Hud {
+            smart: Some(Item::Pickaxe),
+            shift: true,
+            ..Hud::default()
+        };
+        hud(&player, &state, &camera, viewport, &mut 0, &mut out);
         let slots: Vec<_> = out.iter().filter(|i| i.mat == icons::SLOT.index).collect();
         assert_eq!(slots.len(), HOTBAR);
         let left = camera.tile_to_px(slots[0].pos)[0];
         // The slot frame fills the top left 24 pixels of its 32-pixel quad.
-        let right = camera.tile_to_px(slots[HOTBAR - 1].pos)[0] + icons::SLOT_PX as f32 * hud_scale(viewport.1);
+        let right = camera.tile_to_px(slots[HOTBAR - 1].pos)[0] + icons::SLOT_PX as f32 * ui::scale(viewport.1);
         assert!(
             (left + right - viewport.0 as f32).abs() <= 2.0,
             "centred: {left} to {right}"

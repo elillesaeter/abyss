@@ -19,6 +19,7 @@ mod shader_check;
 mod sky;
 mod tiles;
 mod trees;
+mod ui;
 mod world;
 mod worldgen;
 
@@ -85,7 +86,9 @@ fn main() {
     if let Some(path) = flag(&args, "--screenshot") {
         let width = flag(&args, "--width").and_then(|v| v.parse().ok()).unwrap_or(1280);
         let height = flag(&args, "--height").and_then(|v| v.parse().ok()).unwrap_or(720);
-        screenshot(world, seed, path, width, height, zoom);
+        // `--inventory` captures with the inventory open and dirt on the cursor.
+        let open = args.iter().any(|a| a == "--inventory");
+        screenshot(world, seed, path, width, height, zoom, open);
         return;
     }
     println!(
@@ -99,6 +102,11 @@ fn main() {
     let mut app = App::new(world, seed, frames, zoom);
     event_loop.run_app(&mut app).expect("event loop");
 }
+
+/// Holding the right button on a slot takes one, then another after
+/// `TAKE_FIRST`, then one every `TAKE_EVERY` seconds.
+const TAKE_FIRST: f32 = 0.3;
+const TAKE_EVERY: f32 = 0.15;
 
 /// How much faster time runs while T is held: a whole day in 24 seconds.
 const TIME_WARP: f32 = 60.0;
@@ -117,8 +125,15 @@ struct App {
     cursor: [f32; 2],
     /// Held down, the left button keeps using the held item.
     using_held: bool,
-    /// What the current hold uses instead, picked by the smart cursor at the press.
+    /// What the current hold uses instead: the cursor's item, or the smart
+    /// cursor's pick when Shift was down at the press.
     latched: Option<items::Item>,
+    inventory_open: bool,
+    /// The right button held over the inventory, taking one at a time, and
+    /// how long until the next.
+    taking: bool,
+    take_again: f32,
+    viewport: (u32, u32),
     popups: Vec<combat::Popup>,
     /// `--zoom` from the command line, applied instead of fitting the default view.
     zoom_override: Option<usize>,
@@ -152,10 +167,65 @@ impl App {
             cursor: [0.0, 0.0],
             using_held: false,
             latched: None,
+            inventory_open: false,
+            taking: false,
+            take_again: 0.0,
+            viewport: (1280, 720),
             popups: Vec::new(),
             last_frame: Instant::now(),
             frames_wanted: frames,
             started: Instant::now(),
+        }
+    }
+
+    /// The left button went down: on the inventory it moves things about
+    /// (Shift-click quick-moves); anywhere else it starts using an item, the
+    /// one on the cursor if there is one.
+    fn left_press(&mut self) {
+        if self.inventory_open {
+            let layout = ui::layout(&self.player.inventory, self.viewport);
+            if let Some(slot) = layout.slot_at(self.cursor) {
+                if self.smart() {
+                    self.player.inventory.quick_move(slot);
+                } else {
+                    self.player.inventory.click(slot);
+                }
+                return;
+            }
+            if layout.covers(self.cursor) {
+                return;
+            }
+        }
+        // Used each frame while held; see RedrawRequested. The item is latched
+        // for the whole hold, Shift or no Shift, wherever the pointer goes.
+        self.using_held = true;
+        if let Some(c) = self.player.inventory.cursor {
+            self.latched = Some(c.item);
+        } else if self.smart() {
+            let at = self.camera.px_to_tile(self.cursor);
+            let target = [at[0].floor() as i32, at[1].floor() as i32];
+            self.latched = self
+                .player
+                .smart_item(&self.world, target)
+                .or(self.player.inventory.held());
+        }
+    }
+
+    /// The right button went down: on the inventory it takes one; anywhere
+    /// else it throws what's on the cursor.
+    fn right_press(&mut self) {
+        if self.inventory_open {
+            let layout = ui::layout(&self.player.inventory, self.viewport);
+            if let Some(slot) = layout.slot_at(self.cursor) {
+                self.player.inventory.take_one(slot);
+                return;
+            }
+            if layout.covers(self.cursor) {
+                return;
+            }
+        }
+        if let Some(stack) = self.player.inventory.cursor.take() {
+            combat::throw(&mut self.entities, &self.player, stack);
         }
     }
 
@@ -201,6 +271,7 @@ impl ApplicationHandler for App {
             .with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         let size = window.inner_size();
+        self.viewport = (size.width, size.height);
         self.camera.resize(size.width, size.height);
         match self.zoom_override {
             Some(step) => self.camera.set_zoom(step),
@@ -226,6 +297,7 @@ impl ApplicationHandler for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
+                self.viewport = (size.width, size.height);
                 self.camera.resize(size.width, size.height);
                 self.camera.clamp_to_world(self.world.width(), self.world.height());
                 if let Some(renderer) = &mut self.renderer {
@@ -240,18 +312,21 @@ impl ApplicationHandler for App {
                 state,
                 ..
             } => {
-                // Used each frame while held; see RedrawRequested. With Shift
-                // down at the press, the smart cursor's pick is latched for the
-                // whole hold, Shift or no Shift, wherever the pointer goes.
-                self.using_held = state == ElementState::Pressed;
+                self.using_held = false;
                 self.latched = None;
-                if self.using_held && self.smart() {
-                    let at = self.camera.px_to_tile(self.cursor);
-                    let target = [at[0].floor() as i32, at[1].floor() as i32];
-                    self.latched = self
-                        .player
-                        .smart_item(&self.world, target)
-                        .or(self.player.inventory.held());
+                if state == ElementState::Pressed {
+                    self.left_press();
+                }
+            }
+            WindowEvent::MouseInput {
+                button: MouseButton::Right,
+                state,
+                ..
+            } => {
+                self.taking = state == ElementState::Pressed;
+                self.take_again = TAKE_FIRST;
+                if self.taking {
+                    self.right_press();
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
@@ -273,8 +348,15 @@ impl ApplicationHandler for App {
                     },
                 ..
             } => match (code, state) {
-                // ponytail: Escape quits until it opens the inventory (round 2b).
-                (KeyCode::Escape, ElementState::Pressed) => event_loop.exit(),
+                (KeyCode::Escape, ElementState::Pressed) => {
+                    self.inventory_open = !self.inventory_open;
+                    // Whatever is on the cursor goes back in, or at your feet.
+                    if !self.inventory_open
+                        && let Some(left) = self.player.inventory.stow_cursor()
+                    {
+                        combat::throw(&mut self.entities, &self.player, left);
+                    }
+                }
                 (KeyCode::KeyQ, ElementState::Pressed) if self.held_any(&[KeyCode::SuperLeft, KeyCode::SuperRight]) => {
                     event_loop.exit()
                 }
@@ -312,6 +394,15 @@ impl ApplicationHandler for App {
                     1.0
                 };
                 self.world.sky.advance(dt * speed);
+                if self.taking && self.inventory_open {
+                    self.take_again -= dt;
+                    if self.take_again <= 0.0 {
+                        self.take_again = TAKE_EVERY;
+                        if let Some(slot) = ui::layout(&self.player.inventory, self.viewport).slot_at(self.cursor) {
+                            self.player.inventory.take_one(slot);
+                        }
+                    }
+                }
                 if self.using_held {
                     let at = self.camera.px_to_tile(self.cursor);
                     if let Some((tile, id)) = self.player.use_held(&mut self.world, at, self.latched) {
@@ -347,7 +438,12 @@ impl ApplicationHandler for App {
                 let picked = self
                     .player
                     .smart_item(&self.world, [hovered[0].floor() as i32, hovered[1].floor() as i32]);
-                let smart = (picked, self.smart());
+                let hud = draw::Hud {
+                    smart: picked,
+                    shift: self.smart(),
+                    open: self.inventory_open,
+                    pointer: self.cursor,
+                };
                 if let Some(renderer) = &mut self.renderer {
                     renderer.render(
                         &self.world,
@@ -356,7 +452,7 @@ impl ApplicationHandler for App {
                         &self.entities,
                         &self.popups,
                         &self.light,
-                        smart,
+                        &hud,
                     );
                     if let Some(wanted) = self.frames_wanted {
                         let timed_out = self.started.elapsed() > Duration::from_secs(30);
@@ -409,7 +505,7 @@ fn hotbar_key(code: KeyCode) -> Option<i32> {
 /// Renders one frame without a window and writes it to a PNG. Needed because a
 /// window launched from a terminal may never become visible, which makes the
 /// windowed path unverifiable, and useful for eyeballing changes.
-fn screenshot(mut world: World, seed: u64, path: &str, width: u32, height: u32, zoom: Option<usize>) {
+fn screenshot(mut world: World, seed: u64, path: &str, width: u32, height: u32, zoom: Option<usize>, open: bool) {
     let spawn_x = world.width() / 2;
     let spawn_y = worldgen::surface_y(world.height(), seed, spawn_x) as f32 - 4.0;
     let mut player = Player::new([spawn_x as f32 + 0.5, spawn_y]);
@@ -498,28 +594,21 @@ fn screenshot(mut world: World, seed: u64, path: &str, width: u32, height: u32, 
     let started = Instant::now();
     light.update(&world, lit, &world.sky.lighting());
     let light_time = started.elapsed();
-    renderer.render(
-        &world,
-        &camera,
-        &player,
-        &entities,
-        &popups,
-        &light,
-        (Some(items::Item::Pickaxe), false),
-    );
+    if open {
+        player.inventory.click(items::Slot::Hotbar(1));
+    }
+    let hud = draw::Hud {
+        smart: Some(items::Item::Pickaxe),
+        open,
+        pointer: [width as f32 * 0.5, height as f32 * 0.5],
+        ..draw::Hud::default()
+    };
+    renderer.render(&world, &camera, &player, &entities, &popups, &light, &hud);
     // A second frame, after mining, exercises cache invalidation in the capture too.
     let feet = [player.pos[0] as i32, (player.pos[1] + player::HALF[1]) as i32 + 1];
     world.mine_for_capture(feet[0], feet[1]);
     light.update(&world, lit, &world.sky.lighting());
-    renderer.render(
-        &world,
-        &camera,
-        &player,
-        &entities,
-        &popups,
-        &light,
-        (Some(items::Item::Pickaxe), false),
-    );
+    renderer.render(&world, &camera, &player, &entities, &popups, &light, &hud);
 
     match renderer.save_capture(path) {
         Ok(()) => println!(

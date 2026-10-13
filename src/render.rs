@@ -24,7 +24,6 @@ use crate::combat;
 use crate::draw;
 use crate::entity::Entities;
 use crate::icons;
-use crate::items::Item;
 use crate::light::LightMap;
 use crate::player::{self, Player};
 use crate::sky;
@@ -569,7 +568,7 @@ impl Renderer {
         entities: &Entities,
         popups: &[combat::Popup],
         light: &LightMap,
-        smart: (Option<Item>, bool),
+        hud: &draw::Hud,
     ) {
         let frame = match &self.target {
             Target::Window { surface, .. } => match surface.get_current_texture() {
@@ -621,15 +620,7 @@ impl Renderer {
             Target::Window { config, .. } => (config.width, config.height),
             Target::Offscreen { size, .. } => *size,
         };
-        draw::hud(
-            player,
-            smart.0,
-            smart.1,
-            camera,
-            viewport,
-            &mut next_id,
-            &mut self.instances,
-        );
+        draw::hud(player, hud, camera, viewport, &mut next_id, &mut self.instances);
         self.assembly_time = started.elapsed();
         if self.assembly_time > self.peak_assembly {
             self.peak_assembly = self.assembly_time;

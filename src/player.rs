@@ -522,7 +522,7 @@ mod tests {
         let mut player = standing_player();
         let torches = |p: &Player| {
             p.inventory
-                .slots
+                .hotbar
                 .iter()
                 .flatten()
                 .filter(|s| s.item == Item::Torch)
@@ -552,7 +552,7 @@ mod tests {
     fn a_latched_torch_stops_when_the_torches_run_out() {
         let mut world = flat_world();
         let mut player = standing_player();
-        for slot in player.inventory.slots.iter_mut() {
+        for slot in player.inventory.hotbar.iter_mut() {
             if slot.is_some_and(|s| s.item == Item::Torch) {
                 *slot = None;
             }
